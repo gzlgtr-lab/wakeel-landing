@@ -34,6 +34,18 @@ CREATE TABLE IF NOT EXISTS agent_configs (
   updated_by uuid NOT NULL REFERENCES users(id),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS knowledge_sources (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  name text NOT NULL CHECK (char_length(name) BETWEEN 1 AND 160),
+  source_type text NOT NULL CHECK (source_type IN ('manual', 'url')),
+  locator text,
+  content text NOT NULL CHECK (char_length(content) <= 200000),
+  status text NOT NULL CHECK (status IN ('pending', 'quarantined', 'indexed', 'failed')),
+  prompt_injection_detected boolean NOT NULL DEFAULT false,
+  created_by uuid NOT NULL REFERENCES users(id),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS user_sessions (
   sid varchar NOT NULL PRIMARY KEY,
   sess json NOT NULL,
@@ -45,6 +57,7 @@ ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memberships ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_configs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE knowledge_sources ENABLE ROW LEVEL SECURITY;
 
 CREATE OR REPLACE FUNCTION app_can_access_organization(candidate_organization_id text)
 RETURNS boolean
@@ -77,3 +90,8 @@ DROP POLICY IF EXISTS agent_config_member_access ON agent_configs;
 CREATE POLICY agent_config_member_access ON agent_configs
   USING (app_can_access_organization(agent_configs.organization_id))
   WITH CHECK (app_can_access_organization(agent_configs.organization_id));
+
+DROP POLICY IF EXISTS knowledge_source_member_access ON knowledge_sources;
+CREATE POLICY knowledge_source_member_access ON knowledge_sources
+  USING (app_can_access_organization(knowledge_sources.organization_id))
+  WITH CHECK (app_can_access_organization(knowledge_sources.organization_id));

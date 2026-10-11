@@ -40,6 +40,22 @@ function validateAgentConfig(input) {
 }
 
 const defaultAgentConfig = () => ({ name: "Wakeel Support", instructions: "", defaultLanguage: "ar", guardrails: [] });
+const INJECTION_PATTERNS = [
+  /ignore\s+(all\s+)?previous\s+instructions/i,
+  /reveal\s+(the\s+)?system\s+prompt/i,
+  /disregard\s+(the\s+)?(developer|system)\s+message/i,
+  /you\s+are\s+now\s+(a|an)\s+/i
+];
+function detectPromptInjection(content) {
+  return INJECTION_PATTERNS.some((pattern) => pattern.test(content));
+}
+function validateKnowledgeSource(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return false;
+  return ["manual", "url"].includes(input.sourceType)
+    && typeof input.name === "string" && input.name.trim().length > 0 && input.name.length <= 160
+    && typeof input.content === "string" && input.content.length <= 200000
+    && (input.locator === undefined || (typeof input.locator === "string" && input.locator.length <= 2048));
+}
 
 function createMemoryRepository(seed = []) {
   const users = new Map();
@@ -47,6 +63,7 @@ function createMemoryRepository(seed = []) {
   const memberships = new Map();
   const audit = [];
   const agentConfigs = new Map();
+  const knowledgeSources = new Map();
   for (const record of seed) {
     const user = { id: record.userId || crypto.randomUUID(), email: record.email.toLowerCase(), passwordHash: record.passwordHash };
     users.set(user.email, user);
@@ -83,6 +100,20 @@ function createMemoryRepository(seed = []) {
       agentConfigs.set(organizationId, { organizationId, ...config });
       audit.push({ action: "agent.config_updated", organizationId, actorId: actor.id });
       return { ok: true, config: agentConfigs.get(organizationId) };
+    },
+    async listKnowledgeSources(userId, organizationId) {
+      if (!memberships.has(`${userId}:${organizationId}`)) return null;
+      return [...knowledgeSources.values()].filter((source) => source.organizationId === organizationId);
+    },
+    async createKnowledgeSource(actor, organizationId, input) {
+      const member = memberships.get(`${actor.id}:${organizationId}`);
+      if (!member || ROLES[member.role] < ROLES.admin) return { ok: false, reason: "forbidden" };
+      const id = crypto.randomUUID();
+      const injectionDetected = detectPromptInjection(input.content);
+      const source = { id, organizationId, ...input, locator: input.locator || null, status: injectionDetected ? "quarantined" : "pending", promptInjectionDetected: injectionDetected, createdBy: actor.id };
+      knowledgeSources.set(id, source);
+      audit.push({ action: "knowledge.source_created", organizationId, actorId: actor.id, sourceId: id, status: source.status });
+      return { ok: true, source };
     },
     audit
   };
@@ -160,6 +191,27 @@ function createPostgresRepository(pool) {
         );
         await client.query("INSERT INTO audit_events (organization_id, actor_id, action, metadata) VALUES ($1, $2, $3, $4)", [organizationId, actor.id, "agent.config_updated", JSON.stringify({ fields: Object.keys(config) })]);
         return { ok: true, config: result.rows[0] };
+      });
+    },
+    async listKnowledgeSources(userId, organizationId) {
+      return withUserContext(userId, async (client) => {
+        const result = await client.query("SELECT id, organization_id AS \"organizationId\", name, source_type AS \"sourceType\", locator, content, status, prompt_injection_detected AS \"promptInjectionDetected\", created_by AS \"createdBy\" FROM knowledge_sources WHERE organization_id = $1 ORDER BY created_at DESC", [organizationId]);
+        return result.rows;
+      });
+    },
+    async createKnowledgeSource(actor, organizationId, input) {
+      return withUserContext(actor.id, async (client) => {
+        const roleResult = await client.query("SELECT role FROM memberships WHERE organization_id = $1", [organizationId]);
+        const member = roleResult.rows[0];
+        if (!member || ROLES[member.role] < ROLES.admin) return { ok: false, reason: "forbidden" };
+        const injectionDetected = detectPromptInjection(input.content);
+        const status = injectionDetected ? "quarantined" : "pending";
+        const result = await client.query(
+          "INSERT INTO knowledge_sources (organization_id, name, source_type, locator, content, status, prompt_injection_detected, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, organization_id AS \"organizationId\", name, source_type AS \"sourceType\", locator, content, status, prompt_injection_detected AS \"promptInjectionDetected\", created_by AS \"createdBy\"",
+          [organizationId, input.name, input.sourceType, input.locator || null, input.content, status, injectionDetected, actor.id]
+        );
+        await client.query("INSERT INTO audit_events (organization_id, actor_id, action, metadata) VALUES ($1, $2, $3, $4)", [organizationId, actor.id, "knowledge.source_created", JSON.stringify({ sourceId: result.rows[0].id, status })]);
+        return { ok: true, source: result.rows[0] };
       });
     }
   };
@@ -281,6 +333,14 @@ function createApp({ repository, sessionStore, allowDevLogin = false } = {}) {
     if (!validateAgentConfig(req.body)) return res.status(400).json({ error: "agent_config_invalid" });
     const result = await repo.saveAgentConfig(req.user, req.organizationId, req.body);
     return result.ok ? res.json(result.config) : res.status(403).json({ error: result.reason });
+  });
+  app.get("/api/organizations/:organizationId/knowledge", requireAuth, requireMembership, async (req, res) => {
+    res.json({ sources: await repo.listKnowledgeSources(req.user.id, req.organizationId) });
+  });
+  app.post("/api/organizations/:organizationId/knowledge", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
+    if (!validateKnowledgeSource(req.body)) return res.status(400).json({ error: "knowledge_source_invalid" });
+    const result = await repo.createKnowledgeSource(req.user, req.organizationId, req.body);
+    return result.ok ? res.status(201).json(result.source) : res.status(403).json({ error: result.reason });
   });
   app.patch("/api/organizations/:organizationId/members/:targetUserId", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
     if (!validateRole(req.body.role)) return res.status(400).json({ error: "role_invalid" });
