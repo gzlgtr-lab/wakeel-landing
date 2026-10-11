@@ -10,6 +10,7 @@
 | Agent configuration | Yes, tenant-scoped draft API | Provider-neutral config boundary | Execution/provider safety still pending |
 | Knowledge sources | Yes, bounded text + injection quarantine | Storage contract | Fetching, uploads, scanning, indexing/jobs pending |
 | Conversations/inbox | Yes, create/list/status/assignment lifecycle | Provider-neutral records | Outbound channels, realtime, notifications, SLA automation pending |
+| Conversation analytics | Yes, counts derived from stored records | Query contract | Production dashboards, retention, export, and event pipeline pending |
 | Conversations, AI/RAG | No | No | Not implemented |
 | Billing, API keys, webhooks | No fake flows | Contracts only | Not implemented |
 | Arabic/English | Existing landing/workspace | N/A | Browser matrix still required |

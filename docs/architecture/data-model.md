@@ -9,6 +9,8 @@ The first migration creates:
 - `agent_configs`: one tenant-scoped agent draft with validated language, instructions, and guardrails; it configures behavior but does not execute an AI provider.
 - `knowledge_sources`: tenant-scoped manual/URL source metadata and bounded text. New content is `pending` or `quarantined`; no URL fetch, file parser, embedding, or AI execution is implied.
 - `conversations`: tenant-scoped support records with bounded plain text, channel, status, and optional member assignment. List responses omit customer message content; no outbound messaging is performed.
+
+Analytics currently derives status/channel counts directly from tenant-scoped conversation rows; it does not invent KPIs or represent live provider performance.
 - `user_sessions`: server-side `express-session` records for `connect-pg-simple`.
 
 All identifiers are UUIDs except the human-readable organization key. Membership has a composite primary key. Future domain tables must carry `organization_id` and be protected by membership checks plus transaction-scoped PostgreSQL RLS.

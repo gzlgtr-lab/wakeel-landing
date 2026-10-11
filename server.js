@@ -149,6 +149,16 @@ function createMemoryRepository(seed = []) {
       audit.push({ action: "conversation.updated", organizationId, actorId: actor.id, conversationId, status: input.status, assigneeId: input.assigneeId });
       return { ok: true, conversation: { ...conversation, customerMessage: undefined } };
     },
+    async conversationAnalytics(userId, organizationId) {
+      if (!memberships.has(`${userId}:${organizationId}`)) return null;
+      const rows = [...conversations.values()].filter((item) => item.organizationId === organizationId);
+      return {
+        organizationId,
+        total: rows.length,
+        byStatus: Object.fromEntries([...CONVERSATION_STATUSES].map((status) => [status, rows.filter((item) => item.status === status).length])),
+        byChannel: Object.fromEntries(["web", "email", "whatsapp", "manual"].map((channel) => [channel, rows.filter((item) => item.channel === channel).length]))
+      };
+    },
     audit
   };
 }
@@ -269,6 +279,18 @@ function createPostgresRepository(pool) {
         if (!result.rowCount) return { ok: false, reason: "forbidden" };
         await client.query("INSERT INTO audit_events (organization_id, actor_id, action, metadata) VALUES ($1, $2, $3, $4)", [organizationId, actor.id, "conversation.updated", JSON.stringify({ conversationId, status: input.status, assigneeId: input.assigneeId })]);
         return { ok: true, conversation: result.rows[0] };
+      });
+    },
+    async conversationAnalytics(userId, organizationId) {
+      return withUserContext(userId, async (client) => {
+        const result = await client.query("SELECT status, channel, count(*)::int AS count FROM conversations WHERE organization_id = $1 GROUP BY status, channel", [organizationId]);
+        const analytics = { organizationId, total: 0, byStatus: Object.fromEntries([...CONVERSATION_STATUSES].map((status) => [status, 0])), byChannel: Object.fromEntries(["web", "email", "whatsapp", "manual"].map((channel) => [channel, 0])) };
+        for (const row of result.rows) {
+          analytics.total += row.count;
+          analytics.byStatus[row.status] += row.count;
+          analytics.byChannel[row.channel] += row.count;
+        }
+        return analytics;
       });
     }
   };
@@ -411,6 +433,9 @@ function createApp({ repository, sessionStore, allowDevLogin = false } = {}) {
     if (!validateConversationUpdate(req.body)) return res.status(400).json({ error: "conversation_update_invalid" });
     const result = await repo.updateConversation(req.user, req.organizationId, req.params.conversationId, req.body);
     return result.ok ? res.json(result.conversation) : res.status(result.reason === "forbidden" ? 403 : 404).json({ error: result.reason });
+  });
+  app.get("/api/organizations/:organizationId/analytics/conversations", requireAuth, requireMembership, async (req, res) => {
+    res.json(await repo.conversationAnalytics(req.user.id, req.organizationId));
   });
   app.patch("/api/organizations/:organizationId/members/:targetUserId", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
     if (!validateRole(req.body.role)) return res.status(400).json({ error: "role_invalid" });

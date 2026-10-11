@@ -223,3 +223,24 @@ test("conversations support tenant-scoped create and assignment lifecycle", asyn
   const crossTenant = await owner.get("/api/organizations/org-b/conversations");
   assert.equal(crossTenant.status, 403);
 });
+
+test("conversation analytics are derived from tenant records", async () => {
+  const { app } = await fixture();
+  const owner = request.agent(app);
+  const token = await login(owner, "owner@example.test");
+  for (const channel of ["web", "email"]) {
+    const response = await owner.post("/api/organizations/org-a/conversations").set("x-csrf-token", token).send({
+      subject: `${channel} question`, customerMessage: "Need help", channel
+    });
+    assert.equal(response.status, 201);
+  }
+  const analytics = await owner.get("/api/organizations/org-a/analytics/conversations");
+  assert.deepEqual(analytics.body, {
+    organizationId: "org-a",
+    total: 2,
+    byStatus: { open: 2, pending: 0, escalated: 0, resolved: 0 },
+    byChannel: { web: 1, email: 1, whatsapp: 0, manual: 0 }
+  });
+  const crossTenant = await owner.get("/api/organizations/org-b/analytics/conversations");
+  assert.equal(crossTenant.status, 403);
+});
