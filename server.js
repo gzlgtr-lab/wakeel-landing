@@ -126,8 +126,9 @@ function createMemoryRepository(seed = []) {
   const webhookEndpoints = new Map();
   const webhookEvents = new Set();
   const recoveryTokens = new Map();
+  const verificationTokens = new Map();
   for (const record of seed) {
-    const user = { id: record.userId || crypto.randomUUID(), email: record.email.toLowerCase(), passwordHash: record.passwordHash };
+    const user = { id: record.userId || crypto.randomUUID(), email: record.email.toLowerCase(), passwordHash: record.passwordHash, emailVerifiedAt: record.emailVerifiedAt || null };
     users.set(user.email, user);
     organizations.set(record.organizationId, { id: record.organizationId, name: record.organizationName || record.organizationId });
     memberships.set(`${user.id}:${record.organizationId}`, { userId: user.id, organizationId: record.organizationId, role: record.role });
@@ -148,6 +149,22 @@ function createMemoryRepository(seed = []) {
       const user = [...users.values()].find((candidate) => candidate.id === record.userId);
       if (!user) return { ok: false, reason: "recovery_invalid" };
       user.passwordHash = await bcrypt.hash(password, 12);
+      record.usedAt = Date.now();
+      return { ok: true };
+    },
+    async issueEmailVerification(userId) {
+      const user = [...users.values()].find((candidate) => candidate.id === userId);
+      if (!user) return null;
+      const token = crypto.randomBytes(32).toString("base64url");
+      verificationTokens.set(hashSecret(token), { userId, expiresAt: Date.now() + 24 * 60 * 60 * 1000, usedAt: null });
+      return token;
+    },
+    async confirmEmailVerification(token) {
+      const record = verificationTokens.get(hashSecret(token));
+      if (!record || record.usedAt || record.expiresAt <= Date.now()) return { ok: false, reason: "verification_invalid" };
+      const user = [...users.values()].find((candidate) => candidate.id === record.userId);
+      if (!user) return { ok: false, reason: "verification_invalid" };
+      user.emailVerifiedAt = new Date().toISOString();
       record.usedAt = Date.now();
       return { ok: true };
     },
@@ -359,6 +376,17 @@ function createPostgresRepository(pool) {
       } finally {
         client.release();
       }
+    },
+    async issueEmailVerification(userId) {
+      const userResult = await pool.query("SELECT id FROM users WHERE id = $1", [userId]);
+      if (!userResult.rows[0]) return null;
+      const token = crypto.randomBytes(32).toString("base64url");
+      await pool.query("INSERT INTO email_verification_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '24 hours')", [userId, hashSecret(token)]);
+      return token;
+    },
+    async confirmEmailVerification(token) {
+      const result = await pool.query("SELECT app_consume_email_verification($1) AS user_id", [hashSecret(token)]);
+      return result.rows[0] && result.rows[0].user_id ? { ok: true } : { ok: false, reason: "verification_invalid" };
     },
     async membershipsForUser(userId) {
       return withUserContext(userId, async (client) => {
@@ -695,6 +723,23 @@ function createApp({ repository, sessionStore, allowDevLogin = false } = {}) {
     if (!req.body || typeof req.body.token !== "string" || req.body.token.length < 32 || !validatePassword(req.body.password)) return res.status(400).json({ error: "recovery_invalid" });
     try {
       const result = await repo.resetPassword(req.body.token, req.body.password);
+      return result.ok ? res.status(204).end() : res.status(400).json({ error: result.reason });
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/auth/email-verification/request", requireAuth, async (req, res, next) => {
+    try {
+      await repo.issueEmailVerification(req.user.id);
+      res.status(202).json({ accepted: true });
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/auth/email-verification/confirm", async (req, res, next) => {
+    if (!req.body || typeof req.body.token !== "string" || req.body.token.length < 32) return res.status(400).json({ error: "verification_invalid" });
+    try {
+      const result = await repo.confirmEmailVerification(req.body.token);
       return result.ok ? res.status(204).end() : res.status(400).json({ error: result.reason });
     } catch (error) {
       next(error);

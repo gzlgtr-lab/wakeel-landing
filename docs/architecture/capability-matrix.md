@@ -17,6 +17,7 @@
 | Billing/subscription state | Yes, tenant-scoped state read model updated only by verified, replay-safe webhook events | Provider-neutral contract | Checkout, payment collection, provider synchronization, tax, and invoicing pending |
 | Security/audit | Yes, tenant-scoped admin audit retrieval with bounded limits and metadata redaction | Existing audit/RLS contract | Retention, export, alerting, and compliance review workflow pending |
 | Password recovery | Yes, hashed expiring single-use token lifecycle and generic request/reset contract | Provider-neutral auth boundary | Email delivery, verified email ownership, OIDC, and abuse controls pending |
+| Email verification | Yes, hashed expiring single-use token lifecycle and confirmation contract | Provider-neutral auth boundary | Email delivery, resend throttles, ownership proof operations, and OIDC pending |
 | Conversations, AI/RAG | No | No | Not implemented |
 | Billing, API keys, webhooks | No fake flows | Contracts only | Not implemented |
 | Arabic/English | Existing landing/workspace | N/A | Browser matrix still required |

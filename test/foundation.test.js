@@ -390,3 +390,17 @@ test("password recovery uses an expiring single-use hashed token lifecycle", asy
   const unknown = await requestAgent.post("/api/auth/password-recovery/reset").set("x-csrf-token", csrf.body.token).send({ token: "x".repeat(32), password: "new secure password" });
   assert.equal(unknown.status, 400);
 });
+
+test("email verification uses an expiring single-use token without simulating delivery", async () => {
+  const { app, repo } = await fixture();
+  const owner = request.agent(app);
+  const loginToken = await login(owner, "owner@example.test");
+  const requested = await owner.post("/api/auth/email-verification/request").set("x-csrf-token", loginToken);
+  assert.equal(requested.status, 202);
+  assert.deepEqual(requested.body, { accepted: true });
+  const token = await repo.issueEmailVerification((await repo.findUserByEmail("owner@example.test")).id);
+  const confirmed = await owner.post("/api/auth/email-verification/confirm").set("x-csrf-token", loginToken).send({ token });
+  assert.equal(confirmed.status, 204);
+  const replay = await owner.post("/api/auth/email-verification/confirm").set("x-csrf-token", loginToken).send({ token });
+  assert.equal(replay.status, 400);
+});

@@ -3,8 +3,40 @@ CREATE TABLE IF NOT EXISTS users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   email text NOT NULL UNIQUE,
   password_hash text NOT NULL,
+  email_verified_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS email_verification_tokens (
+  token_hash text PRIMARY KEY,
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at timestamptz NOT NULL,
+  used_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS email_verification_tokens_expiry_idx ON email_verification_tokens (expires_at);
+ALTER TABLE email_verification_tokens ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS email_verification_token_self_access ON email_verification_tokens;
+CREATE POLICY email_verification_token_self_access ON email_verification_tokens
+  USING (user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid);
+CREATE OR REPLACE FUNCTION app_consume_email_verification(candidate_token_hash text)
+RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  candidate_user_id uuid;
+BEGIN
+  UPDATE email_verification_tokens
+  SET used_at = now()
+  WHERE token_hash = candidate_token_hash
+    AND used_at IS NULL
+    AND expires_at > now()
+  RETURNING user_id INTO candidate_user_id;
+  IF candidate_user_id IS NULL THEN RETURN NULL; END IF;
+  UPDATE users SET email_verified_at = now() WHERE id = candidate_user_id;
+  RETURN candidate_user_id;
+END;
+$$;
 CREATE TABLE IF NOT EXISTS password_recovery_tokens (
   token_hash text PRIMARY KEY,
   user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,

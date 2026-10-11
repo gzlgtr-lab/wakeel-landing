@@ -17,6 +17,7 @@
 - Subscription state has no local checkout or payment success path. It changes only after webhook signature and replay validation, with tenant-scoped state and billing-event records.
 - Audit retrieval is restricted to tenant admins, bounded to 100 records per request, and removes metadata keys that resemble secrets, tokens, hashes, passwords, or ciphertext.
 - Password recovery tokens are random, stored only as hashes, expire after one hour, and are single-use. Requests return a generic accepted response; email delivery and account verification remain external integration boundaries.
+- Email-verification tokens are random, stored only as hashes, expire after 24 hours, and are single-use. The confirmation path marks the user verified only after token validation; delivery is not implemented.
 - Production startup fails without a database URL or a session secret of at least 32 characters.
 - Organization routes require an authenticated user and a membership in the path organization.
 - Role mutation requires `admin` or `owner` privilege and writes an audit event through the repository adapter.
