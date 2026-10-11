@@ -47,8 +47,10 @@ CREATE INDEX IF NOT EXISTS password_recovery_tokens_expiry_idx ON password_recov
 CREATE TABLE IF NOT EXISTS organizations (
   id text PRIMARY KEY,
   name text NOT NULL,
+  retention_days integer NOT NULL DEFAULT 365 CHECK (retention_days BETWEEN 30 AND 3650),
   created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS retention_days integer NOT NULL DEFAULT 365;
 CREATE TABLE IF NOT EXISTS memberships (
   user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,

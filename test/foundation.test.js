@@ -404,3 +404,20 @@ test("email verification uses an expiring single-use token without simulating de
   const replay = await owner.post("/api/auth/email-verification/confirm").set("x-csrf-token", loginToken).send({ token });
   assert.equal(replay.status, 400);
 });
+
+test("retention policy is tenant-scoped, bounded, admin-only, and audited", async () => {
+  const { app, repo } = await fixture();
+  const owner = request.agent(app);
+  const member = request.agent(app);
+  const ownerToken = await login(owner, "owner@example.test");
+  const memberToken = await login(member, "member@example.test");
+  const denied = await member.patch("/api/organizations/org-a/privacy/retention").set("x-csrf-token", memberToken).send({ retentionDays: 90 });
+  assert.equal(denied.status, 403);
+  const invalid = await owner.patch("/api/organizations/org-a/privacy/retention").set("x-csrf-token", ownerToken).send({ retentionDays: 7 });
+  assert.equal(invalid.status, 400);
+  const updated = await owner.patch("/api/organizations/org-a/privacy/retention").set("x-csrf-token", ownerToken).send({ retentionDays: 730 });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.retentionDays, 730);
+  assert.equal(repo.audit.at(-1).action, "privacy.retention_updated");
+  assert.equal((await owner.get("/api/organizations/org-a")).body.organization.retentionDays, 730);
+});

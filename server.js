@@ -83,6 +83,9 @@ function redactAuditMetadata(metadata) {
 function validatePassword(password) {
   return typeof password === "string" && password.length >= 12 && password.length <= 256;
 }
+function validateRetentionDays(value) {
+  return Number.isInteger(value) && value >= 30 && value <= 3650;
+}
 const SUBSCRIPTION_STATUSES = new Set(["trialing", "active", "past_due", "canceled", "incomplete"]);
 const BILLING_EVENT_TYPES = new Set(["subscription.updated", "subscription.deleted"]);
 function hashSecret(secret) {
@@ -130,7 +133,7 @@ function createMemoryRepository(seed = []) {
   for (const record of seed) {
     const user = { id: record.userId || crypto.randomUUID(), email: record.email.toLowerCase(), passwordHash: record.passwordHash, emailVerifiedAt: record.emailVerifiedAt || null };
     users.set(user.email, user);
-    organizations.set(record.organizationId, { id: record.organizationId, name: record.organizationName || record.organizationId });
+    organizations.set(record.organizationId, { id: record.organizationId, name: record.organizationName || record.organizationId, retentionDays: record.retentionDays || 365 });
     memberships.set(`${user.id}:${record.organizationId}`, { userId: user.id, organizationId: record.organizationId, role: record.role });
   }
   return {
@@ -184,6 +187,15 @@ function createMemoryRepository(seed = []) {
       const member = memberships.get(`${userId}:${organizationId}`);
       if (!member) return null;
       return { organization: organizations.get(organizationId), membership: member };
+    },
+    async updateRetentionPolicy(actor, organizationId, retentionDays) {
+      const member = memberships.get(`${actor.id}:${organizationId}`);
+      if (!member || ROLES[member.role] < ROLES.admin) return { ok: false, reason: "forbidden" };
+      if (!validateRetentionDays(retentionDays)) return { ok: false, reason: "retention_invalid" };
+      const organization = organizations.get(organizationId);
+      organization.retentionDays = retentionDays;
+      audit.push({ action: "privacy.retention_updated", organizationId, actorId: actor.id, metadata: { retentionDays } });
+      return { ok: true, retentionDays };
     },
     async agentConfig(userId, organizationId) {
       if (!memberships.has(`${userId}:${organizationId}`)) return null;
@@ -416,6 +428,17 @@ function createPostgresRepository(pool) {
       return withUserContext(userId, async (client) => {
         const result = await client.query("SELECT o.id, o.name, m.role FROM organizations o JOIN memberships m ON m.organization_id = o.id WHERE o.id = $1", [organizationId]);
         return result.rows[0] || null;
+      });
+    },
+    async updateRetentionPolicy(actor, organizationId, retentionDays) {
+      if (!validateRetentionDays(retentionDays)) return { ok: false, reason: "retention_invalid" };
+      return withUserContext(actor.id, async (client) => {
+        const roleResult = await client.query("SELECT role FROM memberships WHERE organization_id = $1", [organizationId]);
+        if (!roleResult.rows[0] || ROLES[roleResult.rows[0].role] < ROLES.admin) return { ok: false, reason: "forbidden" };
+        const result = await client.query("UPDATE organizations SET retention_days = $1 WHERE id = $2 RETURNING retention_days AS \"retentionDays\"", [retentionDays, organizationId]);
+        if (!result.rowCount) return { ok: false, reason: "not_found" };
+        await client.query("INSERT INTO audit_events (organization_id, actor_id, action, metadata) VALUES ($1, $2, $3, $4)", [organizationId, actor.id, "privacy.retention_updated", JSON.stringify({ retentionDays })]);
+        return { ok: true, retentionDays: result.rows[0].retentionDays };
       });
     },
     async agentConfig(userId, organizationId) {
@@ -760,6 +783,10 @@ function createApp({ repository, sessionStore, allowDevLogin = false } = {}) {
   app.get("/api/auth/session", (req, res) => res.json({ authenticated: Boolean(req.user), user: req.user ? { id: req.user.id, email: req.user.email } : null }));
   app.get("/api/organizations", requireAuth, async (req, res) => res.json({ organizations: await repo.membershipsForUser(req.user.id) }));
   app.get("/api/organizations/:organizationId", requireAuth, requireMembership, async (req, res) => res.json(await repo.organizationData(req.user.id, req.organizationId)));
+  app.patch("/api/organizations/:organizationId/privacy/retention", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
+    const result = await repo.updateRetentionPolicy(req.user, req.organizationId, req.body && req.body.retentionDays);
+    return result.ok ? res.json(result) : res.status(result.reason === "forbidden" ? 403 : 400).json({ error: result.reason });
+  });
   app.get("/api/organizations/:organizationId/agent", requireAuth, requireMembership, async (req, res) => res.json(await repo.agentConfig(req.user.id, req.organizationId)));
   app.put("/api/organizations/:organizationId/agent", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
     if (!validateAgentConfig(req.body)) return res.status(400).json({ error: "agent_config_invalid" });
