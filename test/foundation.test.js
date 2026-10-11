@@ -138,3 +138,36 @@ test("PostgreSQL repository scopes organization queries to a transaction user", 
   assert.equal(calls.at(-2).text, "COMMIT");
   assert.equal(calls.at(-1).text, "release");
 });
+
+test("agent configuration is tenant-scoped and admin-writable", async () => {
+  const { app, repo } = await fixture();
+  const owner = request.agent(app);
+  const member = request.agent(app);
+  const ownerToken = await login(owner, "owner@example.test");
+  const memberToken = await login(member, "member@example.test");
+  const initial = await member.get("/api/organizations/org-a/agent");
+  assert.equal(initial.status, 200);
+  assert.equal(initial.body.organizationId, "org-a");
+  const denied = await member.put("/api/organizations/org-a/agent").set("x-csrf-token", memberToken).send({
+    name: "Nope", instructions: "", defaultLanguage: "en", guardrails: []
+  });
+  assert.equal(denied.status, 403);
+  const saved = await owner.put("/api/organizations/org-a/agent").set("x-csrf-token", ownerToken).send({
+    name: "Wakeel Arabic", instructions: "Use cited sources.", defaultLanguage: "ar", guardrails: ["Escalate low confidence"]
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.name, "Wakeel Arabic");
+  assert.equal(repo.audit.at(-1).action, "agent.config_updated");
+  const crossTenant = await owner.get("/api/organizations/org-b/agent");
+  assert.equal(crossTenant.status, 403);
+});
+
+test("agent configuration rejects unsafe or oversized values", async () => {
+  const { app } = await fixture();
+  const owner = request.agent(app);
+  const token = await login(owner, "owner@example.test");
+  const response = await owner.put("/api/organizations/org-a/agent").set("x-csrf-token", token).send({
+    name: "", instructions: "x", defaultLanguage: "fr", guardrails: []
+  });
+  assert.equal(response.status, 400);
+});

@@ -6,6 +6,7 @@ The first migration creates:
 - `organizations`: tenant boundary.
 - `memberships`: user-to-organization relationship with `owner`, `admin`, `member`, or `viewer`.
 - `audit_events`: organization-scoped security and administration trail.
+- `agent_configs`: one tenant-scoped agent draft with validated language, instructions, and guardrails; it configures behavior but does not execute an AI provider.
 - `user_sessions`: server-side `express-session` records for `connect-pg-simple`.
 
 All identifiers are UUIDs except the human-readable organization key. Membership has a composite primary key. Future domain tables must carry `organization_id` and be protected by membership checks plus transaction-scoped PostgreSQL RLS.

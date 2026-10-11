@@ -30,11 +30,23 @@ function validateRole(role) {
   return typeof role === "string" && Object.prototype.hasOwnProperty.call(ROLES, role);
 }
 
+function validateAgentConfig(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return false;
+  return typeof input.name === "string" && input.name.trim().length > 0 && input.name.length <= 100
+    && typeof input.instructions === "string" && input.instructions.length <= 10000
+    && ["ar", "en"].includes(input.defaultLanguage)
+    && Array.isArray(input.guardrails) && input.guardrails.length <= 20
+    && input.guardrails.every((item) => typeof item === "string" && item.length <= 200);
+}
+
+const defaultAgentConfig = () => ({ name: "Wakeel Support", instructions: "", defaultLanguage: "ar", guardrails: [] });
+
 function createMemoryRepository(seed = []) {
   const users = new Map();
   const organizations = new Map();
   const memberships = new Map();
   const audit = [];
+  const agentConfigs = new Map();
   for (const record of seed) {
     const user = { id: record.userId || crypto.randomUUID(), email: record.email.toLowerCase(), passwordHash: record.passwordHash };
     users.set(user.email, user);
@@ -60,6 +72,17 @@ function createMemoryRepository(seed = []) {
       const member = memberships.get(`${userId}:${organizationId}`);
       if (!member) return null;
       return { organization: organizations.get(organizationId), membership: member };
+    },
+    async agentConfig(userId, organizationId) {
+      if (!memberships.has(`${userId}:${organizationId}`)) return null;
+      return agentConfigs.get(organizationId) || { organizationId, ...defaultAgentConfig() };
+    },
+    async saveAgentConfig(actor, organizationId, config) {
+      const member = memberships.get(`${actor.id}:${organizationId}`);
+      if (!member || ROLES[member.role] < ROLES.admin) return { ok: false, reason: "forbidden" };
+      agentConfigs.set(organizationId, { organizationId, ...config });
+      audit.push({ action: "agent.config_updated", organizationId, actorId: actor.id });
+      return { ok: true, config: agentConfigs.get(organizationId) };
     },
     audit
   };
@@ -118,6 +141,25 @@ function createPostgresRepository(pool) {
       return withUserContext(userId, async (client) => {
         const result = await client.query("SELECT o.id, o.name, m.role FROM organizations o JOIN memberships m ON m.organization_id = o.id WHERE o.id = $1", [organizationId]);
         return result.rows[0] || null;
+      });
+    },
+    async agentConfig(userId, organizationId) {
+      return withUserContext(userId, async (client) => {
+        const result = await client.query("SELECT organization_id AS \"organizationId\", name, instructions, default_language AS \"defaultLanguage\", guardrails FROM agent_configs WHERE organization_id = $1", [organizationId]);
+        return result.rows[0] || { organizationId, ...defaultAgentConfig() };
+      });
+    },
+    async saveAgentConfig(actor, organizationId, config) {
+      return withUserContext(actor.id, async (client) => {
+        const roleResult = await client.query("SELECT role FROM memberships WHERE organization_id = $1", [organizationId]);
+        const member = roleResult.rows[0];
+        if (!member || ROLES[member.role] < ROLES.admin) return { ok: false, reason: "forbidden" };
+        const result = await client.query(
+          "INSERT INTO agent_configs (organization_id, name, instructions, default_language, guardrails, updated_by) VALUES ($1, $2, $3, $4, $5::jsonb, $6) ON CONFLICT (organization_id) DO UPDATE SET name = EXCLUDED.name, instructions = EXCLUDED.instructions, default_language = EXCLUDED.default_language, guardrails = EXCLUDED.guardrails, updated_by = EXCLUDED.updated_by, updated_at = now() RETURNING organization_id AS \"organizationId\", name, instructions, default_language AS \"defaultLanguage\", guardrails",
+          [organizationId, config.name, config.instructions, config.defaultLanguage, JSON.stringify(config.guardrails), actor.id]
+        );
+        await client.query("INSERT INTO audit_events (organization_id, actor_id, action, metadata) VALUES ($1, $2, $3, $4)", [organizationId, actor.id, "agent.config_updated", JSON.stringify({ fields: Object.keys(config) })]);
+        return { ok: true, config: result.rows[0] };
       });
     }
   };
@@ -234,6 +276,12 @@ function createApp({ repository, sessionStore, allowDevLogin = false } = {}) {
   app.get("/api/auth/session", (req, res) => res.json({ authenticated: Boolean(req.user), user: req.user ? { id: req.user.id, email: req.user.email } : null }));
   app.get("/api/organizations", requireAuth, async (req, res) => res.json({ organizations: await repo.membershipsForUser(req.user.id) }));
   app.get("/api/organizations/:organizationId", requireAuth, requireMembership, async (req, res) => res.json(await repo.organizationData(req.user.id, req.organizationId)));
+  app.get("/api/organizations/:organizationId/agent", requireAuth, requireMembership, async (req, res) => res.json(await repo.agentConfig(req.user.id, req.organizationId)));
+  app.put("/api/organizations/:organizationId/agent", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
+    if (!validateAgentConfig(req.body)) return res.status(400).json({ error: "agent_config_invalid" });
+    const result = await repo.saveAgentConfig(req.user, req.organizationId, req.body);
+    return result.ok ? res.json(result.config) : res.status(403).json({ error: result.reason });
+  });
   app.patch("/api/organizations/:organizationId/members/:targetUserId", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
     if (!validateRole(req.body.role)) return res.status(400).json({ error: "role_invalid" });
     const result = await repo.updateMembership(req.user, req.params.targetUserId, req.organizationId, req.body.role);

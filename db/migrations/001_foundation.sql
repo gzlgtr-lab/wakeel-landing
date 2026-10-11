@@ -25,6 +25,15 @@ CREATE TABLE IF NOT EXISTS audit_events (
   metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS agent_configs (
+  organization_id text PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+  name text NOT NULL CHECK (char_length(name) BETWEEN 1 AND 100),
+  instructions text NOT NULL DEFAULT '',
+  default_language text NOT NULL CHECK (default_language IN ('ar', 'en')),
+  guardrails jsonb NOT NULL DEFAULT '[]'::jsonb,
+  updated_by uuid NOT NULL REFERENCES users(id),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS user_sessions (
   sid varchar NOT NULL PRIMARY KEY,
   sess json NOT NULL,
@@ -35,6 +44,7 @@ CREATE INDEX IF NOT EXISTS user_sessions_expire_idx ON user_sessions (expire);
 ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memberships ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_configs ENABLE ROW LEVEL SECURITY;
 
 CREATE OR REPLACE FUNCTION app_can_access_organization(candidate_organization_id text)
 RETURNS boolean
@@ -62,3 +72,8 @@ CREATE POLICY memberships_self_access ON memberships
 DROP POLICY IF EXISTS audit_member_access ON audit_events;
 CREATE POLICY audit_member_access ON audit_events
   USING (app_can_access_organization(audit_events.organization_id));
+
+DROP POLICY IF EXISTS agent_config_member_access ON agent_configs;
+CREATE POLICY agent_config_member_access ON agent_configs
+  USING (app_can_access_organization(agent_configs.organization_id))
+  WITH CHECK (app_can_access_organization(agent_configs.organization_id));
