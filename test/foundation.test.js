@@ -373,3 +373,20 @@ test("audit records are tenant-scoped, admin-only, and redact sensitive metadata
   assert.equal(response.body.events[0].secret, "never-return");
   assert.equal(ownerToken.length > 0 && memberToken.length > 0, true);
 });
+
+test("password recovery uses an expiring single-use hashed token lifecycle", async () => {
+  const { app, repo } = await fixture();
+  const requestAgent = request.agent(app);
+  const csrf = await requestAgent.get("/api/auth/csrf");
+  const generic = await requestAgent.post("/api/auth/password-recovery/request").set("x-csrf-token", csrf.body.token).send({ email: "owner@example.test" });
+  assert.equal(generic.status, 202);
+  assert.deepEqual(generic.body, { accepted: true });
+  const token = await repo.issuePasswordRecovery("owner@example.test");
+  assert.equal(typeof token, "string");
+  const reset = await requestAgent.post("/api/auth/password-recovery/reset").set("x-csrf-token", csrf.body.token).send({ token, password: "new secure password" });
+  assert.equal(reset.status, 204);
+  const replay = await requestAgent.post("/api/auth/password-recovery/reset").set("x-csrf-token", csrf.body.token).send({ token, password: "another secure password" });
+  assert.equal(replay.status, 400);
+  const unknown = await requestAgent.post("/api/auth/password-recovery/reset").set("x-csrf-token", csrf.body.token).send({ token: "x".repeat(32), password: "new secure password" });
+  assert.equal(unknown.status, 400);
+});

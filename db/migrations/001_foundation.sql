@@ -5,6 +5,13 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS password_recovery_tokens (
+  token_hash text PRIMARY KEY,
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at timestamptz NOT NULL,
+  used_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS password_recovery_tokens_expiry_idx ON password_recovery_tokens (expires_at);
 CREATE TABLE IF NOT EXISTS organizations (
   id text PRIMARY KEY,
   name text NOT NULL,

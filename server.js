@@ -80,6 +80,9 @@ function redactAuditMetadata(metadata) {
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return {};
   return Object.fromEntries(Object.entries(metadata).filter(([key]) => !/(secret|password|token|hash|ciphertext)/i.test(key)));
 }
+function validatePassword(password) {
+  return typeof password === "string" && password.length >= 12 && password.length <= 256;
+}
 const SUBSCRIPTION_STATUSES = new Set(["trialing", "active", "past_due", "canceled", "incomplete"]);
 const BILLING_EVENT_TYPES = new Set(["subscription.updated", "subscription.deleted"]);
 function hashSecret(secret) {
@@ -122,6 +125,7 @@ function createMemoryRepository(seed = []) {
   const apiKeys = new Map();
   const webhookEndpoints = new Map();
   const webhookEvents = new Set();
+  const recoveryTokens = new Map();
   for (const record of seed) {
     const user = { id: record.userId || crypto.randomUUID(), email: record.email.toLowerCase(), passwordHash: record.passwordHash };
     users.set(user.email, user);
@@ -131,6 +135,22 @@ function createMemoryRepository(seed = []) {
   return {
     async findUserByEmail(email) { return users.get(String(email).toLowerCase()) || null; },
     async findUserById(id) { return [...users.values()].find((user) => user.id === id) || null; },
+    async issuePasswordRecovery(email) {
+      const user = users.get(String(email).toLowerCase());
+      if (!user) return null;
+      const token = crypto.randomBytes(32).toString("base64url");
+      recoveryTokens.set(hashSecret(token), { userId: user.id, expiresAt: Date.now() + 60 * 60 * 1000, usedAt: null });
+      return token;
+    },
+    async resetPassword(token, password) {
+      const record = recoveryTokens.get(hashSecret(token));
+      if (!record || record.usedAt || record.expiresAt <= Date.now() || !validatePassword(password)) return { ok: false, reason: "recovery_invalid" };
+      const user = [...users.values()].find((candidate) => candidate.id === record.userId);
+      if (!user) return { ok: false, reason: "recovery_invalid" };
+      user.passwordHash = await bcrypt.hash(password, 12);
+      record.usedAt = Date.now();
+      return { ok: true };
+    },
     async membershipsForUser(userId) { return [...memberships.values()].filter((item) => item.userId === userId); },
     async membership(userId, organizationId) { return memberships.get(`${userId}:${organizationId}`) || null; },
     async updateMembership(actor, targetUserId, organizationId, role) {
@@ -313,6 +333,32 @@ function createPostgresRepository(pool) {
     async findUserById(id) {
       const result = await pool.query("SELECT id, email, password_hash AS \"passwordHash\" FROM users WHERE id = $1", [id]);
       return result.rows[0] || null;
+    },
+    async issuePasswordRecovery(email) {
+      const userResult = await pool.query("SELECT id FROM users WHERE lower(email) = lower($1)", [email]);
+      if (!userResult.rows[0]) return null;
+      const token = crypto.randomBytes(32).toString("base64url");
+      await pool.query("INSERT INTO password_recovery_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '1 hour')", [userResult.rows[0].id, hashSecret(token)]);
+      return token;
+    },
+    async resetPassword(token, password) {
+      if (!validatePassword(password)) return { ok: false, reason: "recovery_invalid" };
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const result = await client.query("SELECT user_id FROM password_recovery_tokens WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now() FOR UPDATE", [hashSecret(token)]);
+        if (!result.rows[0]) { await client.query("ROLLBACK"); return { ok: false, reason: "recovery_invalid" }; }
+        const passwordHash = await bcrypt.hash(password, 12);
+        await client.query("UPDATE users SET password_hash = $1 WHERE id = $2", [passwordHash, result.rows[0].user_id]);
+        await client.query("UPDATE password_recovery_tokens SET used_at = now() WHERE token_hash = $1", [hashSecret(token)]);
+        await client.query("COMMIT");
+        return { ok: true };
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
     },
     async membershipsForUser(userId) {
       return withUserContext(userId, async (client) => {
@@ -635,6 +681,24 @@ function createApp({ repository, sessionStore, allowDevLogin = false } = {}) {
         });
       });
     })(req, res, next);
+  });
+  app.post("/api/auth/password-recovery/request", async (req, res, next) => {
+    if (!validateEmail(req.body && req.body.email)) return res.status(400).json({ error: "email_invalid" });
+    try {
+      await repo.issuePasswordRecovery(req.body.email);
+      res.status(202).json({ accepted: true });
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/auth/password-recovery/reset", async (req, res, next) => {
+    if (!req.body || typeof req.body.token !== "string" || req.body.token.length < 32 || !validatePassword(req.body.password)) return res.status(400).json({ error: "recovery_invalid" });
+    try {
+      const result = await repo.resetPassword(req.body.token, req.body.password);
+      return result.ok ? res.status(204).end() : res.status(400).json({ error: result.reason });
+    } catch (error) {
+      next(error);
+    }
   });
   app.post("/api/auth/dev-login", async (req, res, next) => {
     if (!allowDevLogin) return res.status(404).json({ error: "not_found" });
