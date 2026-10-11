@@ -10,6 +10,8 @@ The first migration creates:
 
 All identifiers are UUIDs except the human-readable organization key. Membership has a composite primary key. Future domain tables must carry `organization_id` and be protected by membership checks plus transaction-scoped PostgreSQL RLS.
 
+The migration enables RLS on organizations, memberships, and audit events. Repository organization reads and writes use a transaction-local `app.current_user_id`; missing context yields no rows under the policies. Deployments must use a non-owner application role so owner bypass cannot defeat these policies.
+
 ## Migration and seed
 
 Run `npm run db:migrate` and then `WAKEEL_SEED_PASSWORD=... npm run db:seed` with `WAKEEL_DATABASE_URL` set. The seed account is local bootstrap data, not a production credential. Do not commit the password or database URL.

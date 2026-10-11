@@ -66,6 +66,21 @@ function createMemoryRepository(seed = []) {
 }
 
 function createPostgresRepository(pool) {
+  async function withUserContext(userId, callback) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT set_config('app.current_user_id', $1, true)", [userId]);
+      const result = await callback(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
   return {
     async findUserByEmail(email) {
       const result = await pool.query("SELECT id, email, password_hash AS \"passwordHash\" FROM users WHERE lower(email) = lower($1)", [email]);
@@ -76,25 +91,34 @@ function createPostgresRepository(pool) {
       return result.rows[0] || null;
     },
     async membershipsForUser(userId) {
-      const result = await pool.query("SELECT user_id AS \"userId\", organization_id AS \"organizationId\", role FROM memberships WHERE user_id = $1", [userId]);
-      return result.rows;
+      return withUserContext(userId, async (client) => {
+        const result = await client.query("SELECT user_id AS \"userId\", organization_id AS \"organizationId\", role FROM memberships");
+        return result.rows;
+      });
     },
     async membership(userId, organizationId) {
-      const result = await pool.query("SELECT user_id AS \"userId\", organization_id AS \"organizationId\", role FROM memberships WHERE user_id = $1 AND organization_id = $2", [userId, organizationId]);
-      return result.rows[0] || null;
+      return withUserContext(userId, async (client) => {
+        const result = await client.query("SELECT user_id AS \"userId\", organization_id AS \"organizationId\", role FROM memberships WHERE organization_id = $1", [organizationId]);
+        return result.rows[0] || null;
+      });
     },
     async updateMembership(actor, targetUserId, organizationId, role) {
-      const actorMembership = await this.membership(actor.id, organizationId);
-      if (!actorMembership || ROLES[actorMembership.role] < ROLES.admin) return { ok: false, reason: "forbidden" };
       if (!ROLES[role]) return { ok: false, reason: "not_found" };
-      const result = await pool.query("UPDATE memberships SET role = $1 WHERE user_id = $2 AND organization_id = $3 RETURNING user_id", [role, targetUserId, organizationId]);
-      if (!result.rowCount || !ROLES[role]) return { ok: false, reason: "not_found" };
-      await pool.query("INSERT INTO audit_events (organization_id, actor_id, action, metadata) VALUES ($1, $2, $3, $4)", [organizationId, actor.id, "membership.role_changed", JSON.stringify({ targetUserId, role })]);
-      return { ok: true };
+      return withUserContext(actor.id, async (client) => {
+        const actorResult = await client.query("SELECT role FROM memberships WHERE organization_id = $1", [organizationId]);
+        const actorMembership = actorResult.rows[0];
+        if (!actorMembership || ROLES[actorMembership.role] < ROLES.admin) return { ok: false, reason: "forbidden" };
+        const result = await client.query("UPDATE memberships SET role = $1 WHERE user_id = $2 AND organization_id = $3 RETURNING user_id", [role, targetUserId, organizationId]);
+        if (!result.rowCount) return { ok: false, reason: "not_found" };
+        await client.query("INSERT INTO audit_events (organization_id, actor_id, action, metadata) VALUES ($1, $2, $3, $4)", [organizationId, actor.id, "membership.role_changed", JSON.stringify({ targetUserId, role })]);
+        return { ok: true };
+      });
     },
     async organizationData(userId, organizationId) {
-      const result = await pool.query("SELECT o.id, o.name, m.role FROM organizations o JOIN memberships m ON m.organization_id = o.id WHERE o.id = $1 AND m.user_id = $2", [organizationId, userId]);
-      return result.rows[0] || null;
+      return withUserContext(userId, async (client) => {
+        const result = await client.query("SELECT o.id, o.name, m.role FROM organizations o JOIN memberships m ON m.organization_id = o.id WHERE o.id = $1", [organizationId]);
+        return result.rows[0] || null;
+      });
     }
   };
 }

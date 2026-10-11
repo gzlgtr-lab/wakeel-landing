@@ -2,7 +2,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const request = require("supertest");
 const bcrypt = require("bcryptjs");
-const { createApp, createMemoryRepository } = require("../server");
+const fs = require("node:fs");
+const path = require("node:path");
+const { createApp, createMemoryRepository, createPostgresRepository } = require("../server");
 
 async function fixture() {
   const passwordHash = await bcrypt.hash("correct horse battery staple", 4);
@@ -100,4 +102,39 @@ test("login rate limit rejects repeated attempts", async () => {
   }
   const blocked = await agent.post("/api/auth/login").set("x-csrf-token", token).send({ email: "owner@example.test", password: "correct horse battery staple" });
   assert.equal(blocked.status, 429);
+});
+
+test("PostgreSQL migration defines transaction-context RLS policies", () => {
+  const migration = fs.readFileSync(path.join(__dirname, "..", "db", "migrations", "001_foundation.sql"), "utf8");
+  assert.match(migration, /ENABLE ROW LEVEL SECURITY/);
+  assert.match(migration, /current_setting\('app\.current_user_id'/);
+  assert.match(migration, /CREATE POLICY memberships_self_access/);
+  assert.match(migration, /SECURITY DEFINER/);
+});
+
+test("PostgreSQL repository scopes organization queries to a transaction user", async () => {
+  const calls = [];
+  const client = {
+    async query(text, params) {
+      calls.push({ text, params });
+      if (text === "SELECT user_id AS \"userId\", organization_id AS \"organizationId\", role FROM memberships") {
+        return { rows: [{ userId: "u1", organizationId: "org-a", role: "owner" }] };
+      }
+      return { rows: [] };
+    },
+    release() { calls.push({ text: "release" }); }
+  };
+  const pool = {
+    async connect() {
+      return client;
+    }
+  };
+  const repository = createPostgresRepository(pool);
+  const rows = await repository.membershipsForUser("u1");
+  assert.deepEqual(rows, [{ userId: "u1", organizationId: "org-a", role: "owner" }]);
+  assert.equal(calls[0].text, "BEGIN");
+  assert.equal(calls[1].text, "SELECT set_config('app.current_user_id', $1, true)");
+  assert.deepEqual(calls[1].params, ["u1"]);
+  assert.equal(calls.at(-2).text, "COMMIT");
+  assert.equal(calls.at(-1).text, "release");
 });

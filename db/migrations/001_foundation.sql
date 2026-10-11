@@ -31,6 +31,34 @@ CREATE TABLE IF NOT EXISTS user_sessions (
   expire timestamptz NOT NULL
 );
 CREATE INDEX IF NOT EXISTS user_sessions_expire_idx ON user_sessions (expire);
--- Database RLS policies are enabled in the next adapter milestone, after every
--- request transaction sets app.current_user_id with SET LOCAL. The current
--- slice enforces tenant membership in every protected route and query.
+
+ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE memberships ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;
+
+CREATE OR REPLACE FUNCTION app_can_access_organization(candidate_organization_id text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM memberships m
+    WHERE m.organization_id = candidate_organization_id
+      AND m.user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid
+  );
+$$;
+
+DROP POLICY IF EXISTS organizations_member_access ON organizations;
+CREATE POLICY organizations_member_access ON organizations
+  USING (app_can_access_organization(organizations.id));
+
+DROP POLICY IF EXISTS memberships_self_access ON memberships;
+CREATE POLICY memberships_self_access ON memberships
+  USING (app_can_access_organization(memberships.organization_id))
+  WITH CHECK (app_can_access_organization(memberships.organization_id));
+
+DROP POLICY IF EXISTS audit_member_access ON audit_events;
+CREATE POLICY audit_member_access ON audit_events
+  USING (app_can_access_organization(audit_events.organization_id));

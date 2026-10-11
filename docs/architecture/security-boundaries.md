@@ -7,6 +7,7 @@
 - Login rotates the session identifier after successful authentication to reduce session fixation risk.
 - Browser mutations require a session-bound CSRF token in `X-CSRF-Token`; login attempts are bounded per IP/email window.
 - Baseline CSP, clickjacking, MIME-sniffing, referrer, and permissions headers are emitted by the API/static server.
+- PostgreSQL repository organization queries run inside transactions that set `app.current_user_id` with transaction-local `set_config`; migration policies deny rows without that context.
 - Production startup fails without a database URL or a session secret of at least 32 characters.
 - Organization routes require an authenticated user and a membership in the path organization.
 - Role mutation requires `admin` or `owner` privilege and writes an audit event through the repository adapter.
@@ -15,7 +16,7 @@
 
 ## Not yet production-ready
 
-The first slice does not yet include email verification, password reset, OIDC, distributed rate-limit storage, RLS policies, upload malware scanning, webhook signature verification, or full production CSP asset review. These are release blockers, not hidden assumptions. PostgreSQL RLS will be enabled only when every request transaction sets `app.current_user_id` with `SET LOCAL` and policies are tested.
+The first slice does not yet include email verification, password reset, OIDC, distributed rate-limit storage, upload malware scanning, webhook signature verification, or full production CSP asset review. RLS policy execution still requires a live PostgreSQL integration test and a separately privileged application database role; migration owners can bypass RLS by PostgreSQL design.
 
 ## Threat model
 
