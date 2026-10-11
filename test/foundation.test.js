@@ -230,6 +230,24 @@ test("knowledge sources are tenant-scoped and quarantine prompt injection", asyn
   assert.equal(crossTenant.status, 403);
 });
 
+test("knowledge ingestion queues one idempotent tenant-scoped job", async () => {
+  const { app } = await fixture();
+  const owner = request.agent(app);
+  const token = await login(owner, "owner@example.test");
+  const headers = { "x-csrf-token": token, "x-idempotency-key": "knowledge-123" };
+  const input = { name: "FAQ", sourceType: "manual", content: "Safe content." };
+  const first = await owner.post("/api/organizations/org-a/knowledge").set(headers).send(input);
+  const second = await owner.post("/api/organizations/org-a/knowledge").set(headers).send(input);
+  assert.equal(first.status, 201);
+  assert.equal(second.status, 201);
+  assert.equal(first.body.id, second.body.id);
+  assert.equal(first.body.job.id, second.body.job.id);
+  assert.equal(first.body.job.status, "queued");
+  const invalid = await owner.post("/api/organizations/org-a/knowledge").set("x-csrf-token", token).set("x-idempotency-key", "short").send(input);
+  assert.equal(invalid.status, 400);
+  assert.equal(invalid.body.error, "idempotency_key_invalid");
+});
+
 test("conversations support tenant-scoped create and assignment lifecycle", async () => {
   const { app, repo } = await fixture();
   const owner = request.agent(app);

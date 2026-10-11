@@ -73,6 +73,9 @@ function validateWebhookEndpoint(input) {
     && typeof input.name === "string" && input.name.trim().length > 0 && input.name.length <= 100
     && typeof input.url === "string" && /^https:\/\//i.test(input.url) && input.url.length <= 2048;
 }
+function validateIdempotencyKey(value) {
+  return typeof value === "string" && /^[A-Za-z0-9._:-]{8,128}$/.test(value);
+}
 function hashSecret(secret) {
   return crypto.createHash("sha256").update(secret).digest("hex");
 }
@@ -106,6 +109,7 @@ function createMemoryRepository(seed = []) {
   const errorEvents = [];
   const agentConfigs = new Map();
   const knowledgeSources = new Map();
+  const ingestionJobs = new Map();
   const conversations = new Map();
   const apiKeys = new Map();
   const webhookEndpoints = new Map();
@@ -154,12 +158,21 @@ function createMemoryRepository(seed = []) {
     async createKnowledgeSource(actor, organizationId, input) {
       const member = memberships.get(`${actor.id}:${organizationId}`);
       if (!member || ROLES[member.role] < ROLES.admin) return { ok: false, reason: "forbidden" };
+      const idempotencyKey = input.idempotencyKey || null;
+      const existingJob = idempotencyKey && ingestionJobs.get(`${organizationId}:${idempotencyKey}`);
+      if (existingJob) {
+        const existingSource = knowledgeSources.get(existingJob.sourceId);
+        return { ok: true, source: existingSource, job: existingJob };
+      }
       const id = crypto.randomUUID();
       const injectionDetected = detectPromptInjection(input.content);
       const source = { id, organizationId, ...input, locator: input.locator || null, status: injectionDetected ? "quarantined" : "pending", promptInjectionDetected: injectionDetected, createdBy: actor.id };
       knowledgeSources.set(id, source);
       audit.push({ action: "knowledge.source_created", organizationId, actorId: actor.id, sourceId: id, status: source.status });
-      return { ok: true, source };
+      const jobKey = `${organizationId}:${idempotencyKey || `knowledge:${id}`}`;
+      const job = { id: crypto.randomUUID(), organizationId, type: "knowledge.ingest", idempotencyKey, sourceId: id, status: "queued", attempts: 0, createdAt: new Date().toISOString() };
+      ingestionJobs.set(jobKey, job);
+      return { ok: true, source, job };
     },
     async listConversations(userId, organizationId) {
       if (!memberships.has(`${userId}:${organizationId}`)) return null;
@@ -337,7 +350,12 @@ function createPostgresRepository(pool) {
           [organizationId, input.name, input.sourceType, input.locator || null, input.content, status, injectionDetected, actor.id]
         );
         await client.query("INSERT INTO audit_events (organization_id, actor_id, action, metadata) VALUES ($1, $2, $3, $4)", [organizationId, actor.id, "knowledge.source_created", JSON.stringify({ sourceId: result.rows[0].id, status })]);
-        return { ok: true, source: result.rows[0] };
+        const idempotencyKey = input.idempotencyKey || `knowledge:${result.rows[0].id}`;
+        const jobResult = await client.query(
+          "INSERT INTO background_jobs (organization_id, type, idempotency_key, payload) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (organization_id, idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING id, organization_id AS \"organizationId\", type, idempotency_key AS \"idempotencyKey\", payload->>'sourceId' AS \"sourceId\", status, attempts, created_at AS \"createdAt\"",
+          [organizationId, "knowledge.ingest", idempotencyKey, JSON.stringify({ sourceId: result.rows[0].id })]
+        );
+        return { ok: true, source: result.rows[0], job: jobResult.rows[0] };
       });
     },
     async listConversations(userId, organizationId) {
@@ -575,8 +593,10 @@ function createApp({ repository, sessionStore, allowDevLogin = false } = {}) {
   });
   app.post("/api/organizations/:organizationId/knowledge", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
     if (!validateKnowledgeSource(req.body)) return res.status(400).json({ error: "knowledge_source_invalid" });
-    const result = await repo.createKnowledgeSource(req.user, req.organizationId, req.body);
-    return result.ok ? res.status(201).json(result.source) : res.status(403).json({ error: result.reason });
+    const idempotencyKey = req.get("x-idempotency-key");
+    if (idempotencyKey && !validateIdempotencyKey(idempotencyKey)) return res.status(400).json({ error: "idempotency_key_invalid" });
+    const result = await repo.createKnowledgeSource(req.user, req.organizationId, { ...req.body, idempotencyKey });
+    return result.ok ? res.status(201).json({ ...result.source, job: result.job }) : res.status(403).json({ error: result.reason });
   });
   app.get("/api/organizations/:organizationId/conversations", requireAuth, requireMembership, async (req, res) => {
     res.json({ conversations: await repo.listConversations(req.user.id, req.organizationId) });

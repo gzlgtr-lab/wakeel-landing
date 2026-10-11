@@ -13,6 +13,7 @@
 - API key secrets are returned only at creation and stored hashed. Webhook secrets are returned only at registration, encrypted at rest for future HMAC verification, and protected by timestamp tolerance plus persistent event-id replay checks.
 - API-key metadata listing is tenant-scoped and never returns hashes; revocation is admin-only, persisted, and audited. The current slice does not yet authenticate inbound API requests with these keys.
 - Error responses expose only a request ID and stable error code; server-side error events persist bounded metadata without stack traces or secrets. Tenant-associated events are RLS-scoped.
+- Knowledge ingestion requests may provide a bounded idempotency key. Jobs are unique per tenant/key and only queued; no fetch, parsing, embedding, or provider execution is claimed.
 - Production startup fails without a database URL or a session secret of at least 32 characters.
 - Organization routes require an authenticated user and a membership in the path organization.
 - Role mutation requires `admin` or `owner` privilege and writes an audit event through the repository adapter.

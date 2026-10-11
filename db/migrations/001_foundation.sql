@@ -58,6 +58,17 @@ CREATE TABLE IF NOT EXISTS knowledge_sources (
   created_by uuid NOT NULL REFERENCES users(id),
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS background_jobs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  type text NOT NULL CHECK (char_length(type) BETWEEN 1 AND 100),
+  idempotency_key text NOT NULL CHECK (char_length(idempotency_key) BETWEEN 8 AND 128),
+  payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+  status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'succeeded', 'failed')),
+  attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (organization_id, idempotency_key)
+);
 CREATE TABLE IF NOT EXISTS conversations (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -121,6 +132,7 @@ ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE error_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_configs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE knowledge_sources ENABLE ROW LEVEL SECURITY;
+ALTER TABLE background_jobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE conversations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE webhook_endpoints ENABLE ROW LEVEL SECURITY;
@@ -166,6 +178,11 @@ DROP POLICY IF EXISTS knowledge_source_member_access ON knowledge_sources;
 CREATE POLICY knowledge_source_member_access ON knowledge_sources
   USING (app_can_access_organization(knowledge_sources.organization_id))
   WITH CHECK (app_can_access_organization(knowledge_sources.organization_id));
+
+DROP POLICY IF EXISTS background_job_member_access ON background_jobs;
+CREATE POLICY background_job_member_access ON background_jobs
+  USING (app_can_access_organization(background_jobs.organization_id))
+  WITH CHECK (app_can_access_organization(background_jobs.organization_id));
 
 DROP POLICY IF EXISTS conversation_member_access ON conversations;
 CREATE POLICY conversation_member_access ON conversations
