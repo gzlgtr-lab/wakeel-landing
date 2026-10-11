@@ -30,4 +30,4 @@ The public landing page is static and has no authenticated state. `/api/*` is se
 
 ## Next milestones
 
-Add transaction-scoped PostgreSQL RLS policies, migrations table, organization invites, CSRF protection for browser mutations, knowledge uploads and jobs, conversations, and provider adapters only behind explicit integration contracts.
+Add transaction-scoped PostgreSQL RLS policies, migrations table, organization invites, distributed rate-limit storage, knowledge uploads and jobs, conversations, and provider adapters only behind explicit integration contracts.

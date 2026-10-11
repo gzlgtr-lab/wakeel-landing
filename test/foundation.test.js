@@ -15,6 +15,16 @@ async function fixture() {
   return { app, repo };
 }
 
+async function login(agent, email) {
+  const csrf = await agent.get("/api/auth/csrf");
+  assert.equal(csrf.status, 200);
+  const response = await agent.post("/api/auth/login")
+    .set("x-csrf-token", csrf.body.token)
+    .send({ email, password: "correct horse battery staple" });
+  assert.equal(response.status, 200);
+  return response.body.csrfToken;
+}
+
 test("unauthenticated access is denied", async () => {
   const { app } = await fixture();
   const response = await request(app).get("/api/organizations");
@@ -31,8 +41,7 @@ test("public landing page remains available", async () => {
 test("login creates a server-side session and lists only memberships", async () => {
   const { app } = await fixture();
   const agent = request.agent(app);
-  const login = await agent.post("/api/auth/login").send({ email: "owner@example.test", password: "correct horse battery staple" });
-  assert.equal(login.status, 200);
+  await login(agent, "owner@example.test");
   const session = await agent.get("/api/auth/session");
   assert.equal(session.body.authenticated, true);
   const organizations = await agent.get("/api/organizations");
@@ -43,7 +52,7 @@ test("login creates a server-side session and lists only memberships", async () 
 test("cross-tenant reads are denied", async () => {
   const { app } = await fixture();
   const agent = request.agent(app);
-  await agent.post("/api/auth/login").send({ email: "owner@example.test", password: "correct horse battery staple" });
+  await login(agent, "owner@example.test");
   const response = await agent.get("/api/organizations/org-b");
   assert.equal(response.status, 403);
 });
@@ -51,20 +60,44 @@ test("cross-tenant reads are denied", async () => {
 test("unauthorized role mutations are denied", async () => {
   const { app, repo } = await fixture();
   const agent = request.agent(app);
-  await agent.post("/api/auth/login").send({ email: "member@example.test", password: "correct horse battery staple" });
+  const token = await login(agent, "member@example.test");
   const member = await repo.findUserByEmail("member@example.test");
-  const response = await agent.patch(`/api/organizations/org-a/members/${member.id}`).send({ role: "admin" });
+  const response = await agent.patch(`/api/organizations/org-a/members/${member.id}`).set("x-csrf-token", token).send({ role: "admin" });
   assert.equal(response.status, 403);
 });
 
 test("owner can change a member role inside the same tenant", async () => {
   const { app, repo } = await fixture();
   const agent = request.agent(app);
-  await agent.post("/api/auth/login").send({ email: "owner@example.test", password: "correct horse battery staple" });
+  const token = await login(agent, "owner@example.test");
   const target = [...repo.audit];
   const member = await repo.findUserByEmail("member@example.test");
-  const response = await agent.patch(`/api/organizations/org-a/members/${member.id}`).send({ role: "admin" });
+  const response = await agent.patch(`/api/organizations/org-a/members/${member.id}`).set("x-csrf-token", token).send({ role: "admin" });
   assert.equal(response.status, 200);
   assert.equal((await repo.membership(member.id, "org-a")).role, "admin");
   assert.equal(repo.audit.length, target.length + 1);
+});
+
+test("mutations require a CSRF token and validate roles", async () => {
+  const { app, repo } = await fixture();
+  const agent = request.agent(app);
+  await login(agent, "owner@example.test");
+  const member = await repo.findUserByEmail("member@example.test");
+  const missingToken = await agent.patch(`/api/organizations/org-a/members/${member.id}`).send({ role: "admin" });
+  assert.equal(missingToken.status, 403);
+  const token = (await agent.get("/api/auth/csrf")).body.token;
+  const invalidRole = await agent.patch(`/api/organizations/org-a/members/${member.id}`).set("x-csrf-token", token).send({ role: "superuser" });
+  assert.equal(invalidRole.status, 400);
+});
+
+test("login rate limit rejects repeated attempts", async () => {
+  const { app } = await fixture();
+  const agent = request.agent(app);
+  const token = (await agent.get("/api/auth/csrf")).body.token;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const response = await agent.post("/api/auth/login").set("x-csrf-token", token).send({ email: "owner@example.test", password: "wrong password here" });
+    assert.equal(response.status, 401);
+  }
+  const blocked = await agent.post("/api/auth/login").set("x-csrf-token", token).send({ email: "owner@example.test", password: "correct horse battery staple" });
+  assert.equal(blocked.status, 429);
 });
