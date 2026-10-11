@@ -110,6 +110,38 @@ test("PostgreSQL migration defines transaction-context RLS policies", () => {
   assert.match(migration, /current_setting\('app\.current_user_id'/);
   assert.match(migration, /CREATE POLICY memberships_self_access/);
   assert.match(migration, /SECURITY DEFINER/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS error_events/);
+  assert.match(migration, /CREATE POLICY error_event_member_access/);
+});
+
+test("health surfaces expose request IDs and adapter readiness", async () => {
+  const { app, repo } = await fixture();
+  const live = await request(app).get("/health/live");
+  assert.equal(live.status, 200);
+  assert.equal(live.body.status, "live");
+  assert.match(live.headers["x-request-id"], /^req_[a-f0-9]+$/);
+  const ready = await request(app).get("/health/ready");
+  assert.equal(ready.status, 200);
+  assert.deepEqual(ready.body, { ok: true, database: "memory", status: "ready" });
+  assert.deepEqual(repo.errorEvents, []);
+});
+
+test("readiness failures return a stable error and persist an event", async () => {
+  const errorEvents = [];
+  const app = createApp({
+    repository: {
+      readiness: async () => { throw new Error("database unavailable"); },
+      recordErrorEvent: async (event) => errorEvents.push(event)
+    }
+  });
+  const response = await request(app).get("/health/ready");
+  assert.equal(response.status, 500);
+  assert.equal(response.body.error, "internal_error");
+  assert.match(response.body.requestId, /^req_[a-f0-9]+$/);
+  assert.equal(errorEvents.length, 1);
+  assert.equal(errorEvents[0].path, "/health/ready");
+  assert.equal(errorEvents[0].status, 500);
+  assert.equal(errorEvents[0].metadata.message, "Unhandled server error");
 });
 
 test("PostgreSQL repository scopes organization queries to a transaction user", async () => {
@@ -198,6 +230,24 @@ test("knowledge sources are tenant-scoped and quarantine prompt injection", asyn
   assert.equal(crossTenant.status, 403);
 });
 
+test("knowledge ingestion queues one idempotent tenant-scoped job", async () => {
+  const { app } = await fixture();
+  const owner = request.agent(app);
+  const token = await login(owner, "owner@example.test");
+  const headers = { "x-csrf-token": token, "x-idempotency-key": "knowledge-123" };
+  const input = { name: "FAQ", sourceType: "manual", content: "Safe content." };
+  const first = await owner.post("/api/organizations/org-a/knowledge").set(headers).send(input);
+  const second = await owner.post("/api/organizations/org-a/knowledge").set(headers).send(input);
+  assert.equal(first.status, 201);
+  assert.equal(second.status, 201);
+  assert.equal(first.body.id, second.body.id);
+  assert.equal(first.body.job.id, second.body.job.id);
+  assert.equal(first.body.job.status, "queued");
+  const invalid = await owner.post("/api/organizations/org-a/knowledge").set("x-csrf-token", token).set("x-idempotency-key", "short").send(input);
+  assert.equal(invalid.status, 400);
+  assert.equal(invalid.body.error, "idempotency_key_invalid");
+});
+
 test("conversations support tenant-scoped create and assignment lifecycle", async () => {
   const { app, repo } = await fixture();
   const owner = request.agent(app);
@@ -243,4 +293,131 @@ test("conversation analytics are derived from tenant records", async () => {
   });
   const crossTenant = await owner.get("/api/organizations/org-b/analytics/conversations");
   assert.equal(crossTenant.status, 403);
+});
+
+test("API keys are returned once and webhook signatures reject replay", async () => {
+  const { app } = await fixture();
+  const owner = request.agent(app);
+  const token = await login(owner, "owner@example.test");
+  const key = await owner.post("/api/organizations/org-a/api-keys").set("x-csrf-token", token).send({ name: "Local integration" });
+  assert.equal(key.status, 201);
+  assert.match(key.body.secret, /^wk_live_/);
+  const endpoint = await owner.post("/api/organizations/org-a/webhooks").set("x-csrf-token", token).send({ name: "Inbound", url: "https://example.test/hooks" });
+  assert.equal(endpoint.status, 201);
+  assert.match(endpoint.body.secret, /^whsec_/);
+  const body = JSON.stringify({ type: "conversation.created" });
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const signature = require("node:crypto").createHmac("sha256", endpoint.body.secret).update(`${timestamp}.${body}`).digest("hex");
+  const accepted = await request(app).post(`/api/webhooks/${endpoint.body.id}`).set("x-wakeel-event-id", "evt-1").set("x-wakeel-timestamp", timestamp).set("x-wakeel-signature", signature).set("content-type", "application/json").send(body);
+  assert.equal(accepted.status, 202);
+  const replay = await request(app).post(`/api/webhooks/${endpoint.body.id}`).set("x-wakeel-event-id", "evt-1").set("x-wakeel-timestamp", timestamp).set("x-wakeel-signature", signature).set("content-type", "application/json").send(body);
+  assert.equal(replay.status, 409);
+});
+
+test("API key metadata is tenant-scoped and admin revocation is audited", async () => {
+  const { app, repo } = await fixture();
+  const owner = request.agent(app);
+  const member = request.agent(app);
+  const ownerToken = await login(owner, "owner@example.test");
+  const memberToken = await login(member, "member@example.test");
+  const created = await owner.post("/api/organizations/org-a/api-keys").set("x-csrf-token", ownerToken).send({ name: "Revocable" });
+  assert.equal(created.status, 201);
+  const listed = await member.get("/api/organizations/org-a/api-keys");
+  assert.equal(listed.status, 200);
+  assert.equal(listed.body.keys.length, 1);
+  assert.equal(Object.prototype.hasOwnProperty.call(listed.body.keys[0], "keyHash"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(listed.body.keys[0], "secret"), false);
+  const denied = await member.delete(`/api/organizations/org-a/api-keys/${created.body.id}`).set("x-csrf-token", memberToken);
+  assert.equal(denied.status, 403);
+  const revoked = await owner.delete(`/api/organizations/org-a/api-keys/${created.body.id}`).set("x-csrf-token", ownerToken);
+  assert.equal(revoked.status, 204);
+  assert.equal(repo.audit.at(-1).action, "api_key.revoked");
+  const after = await owner.get("/api/organizations/org-a/api-keys");
+  assert.equal(after.body.keys[0].revokedAt !== null, true);
+});
+
+test("subscription state is read-only locally and updates only from verified idempotent events", async () => {
+  const { app } = await fixture();
+  const owner = request.agent(app);
+  const token = await login(owner, "owner@example.test");
+  const initial = await owner.get("/api/organizations/org-a/subscription");
+  assert.equal(initial.status, 200);
+  assert.equal(initial.body.status, "incomplete");
+  const endpoint = await owner.post("/api/organizations/org-a/webhooks").set("x-csrf-token", token).send({ name: "Billing", url: "https://example.test/billing" });
+  const body = JSON.stringify({ type: "subscription.updated", subscription: { plan: "starter", status: "active", provider: "external", providerSubscriptionId: "sub_123" } });
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const signature = require("node:crypto").createHmac("sha256", endpoint.body.secret).update(`${timestamp}.${body}`).digest("hex");
+  const update = await request(app).post(`/api/webhooks/${endpoint.body.id}`).set("x-wakeel-event-id", "bill-1").set("x-wakeel-timestamp", timestamp).set("x-wakeel-signature", signature).set("content-type", "application/json").send(body);
+  assert.equal(update.status, 202);
+  const subscription = await owner.get("/api/organizations/org-a/subscription");
+  assert.equal(subscription.body.status, "active");
+  assert.equal(subscription.body.plan, "starter");
+  const replay = await request(app).post(`/api/webhooks/${endpoint.body.id}`).set("x-wakeel-event-id", "bill-1").set("x-wakeel-timestamp", timestamp).set("x-wakeel-signature", signature).set("content-type", "application/json").send(body);
+  assert.equal(replay.status, 409);
+});
+
+test("audit records are tenant-scoped, admin-only, and redact sensitive metadata", async () => {
+  const { app, repo } = await fixture();
+  const owner = request.agent(app);
+  const member = request.agent(app);
+  const ownerToken = await login(owner, "owner@example.test");
+  const memberToken = await login(member, "member@example.test");
+  repo.audit.push({ organizationId: "org-a", action: "test.event", secret: "never-return", metadata: { apiKeyHash: "never-return", safe: "ok" } });
+  const denied = await member.get("/api/organizations/org-a/audit");
+  assert.equal(denied.status, 403);
+  const response = await owner.get("/api/organizations/org-a/audit?limit=1");
+  assert.equal(response.status, 200);
+  assert.equal(response.body.events.length, 1);
+  assert.equal(response.body.events[0].metadata.safe, "ok");
+  assert.equal(Object.prototype.hasOwnProperty.call(response.body.events[0].metadata, "apiKeyHash"), false);
+  assert.equal(response.body.events[0].secret, "never-return");
+  assert.equal(ownerToken.length > 0 && memberToken.length > 0, true);
+});
+
+test("password recovery uses an expiring single-use hashed token lifecycle", async () => {
+  const { app, repo } = await fixture();
+  const requestAgent = request.agent(app);
+  const csrf = await requestAgent.get("/api/auth/csrf");
+  const generic = await requestAgent.post("/api/auth/password-recovery/request").set("x-csrf-token", csrf.body.token).send({ email: "owner@example.test" });
+  assert.equal(generic.status, 202);
+  assert.deepEqual(generic.body, { accepted: true });
+  const token = await repo.issuePasswordRecovery("owner@example.test");
+  assert.equal(typeof token, "string");
+  const reset = await requestAgent.post("/api/auth/password-recovery/reset").set("x-csrf-token", csrf.body.token).send({ token, password: "new secure password" });
+  assert.equal(reset.status, 204);
+  const replay = await requestAgent.post("/api/auth/password-recovery/reset").set("x-csrf-token", csrf.body.token).send({ token, password: "another secure password" });
+  assert.equal(replay.status, 400);
+  const unknown = await requestAgent.post("/api/auth/password-recovery/reset").set("x-csrf-token", csrf.body.token).send({ token: "x".repeat(32), password: "new secure password" });
+  assert.equal(unknown.status, 400);
+});
+
+test("email verification uses an expiring single-use token without simulating delivery", async () => {
+  const { app, repo } = await fixture();
+  const owner = request.agent(app);
+  const loginToken = await login(owner, "owner@example.test");
+  const requested = await owner.post("/api/auth/email-verification/request").set("x-csrf-token", loginToken);
+  assert.equal(requested.status, 202);
+  assert.deepEqual(requested.body, { accepted: true });
+  const token = await repo.issueEmailVerification((await repo.findUserByEmail("owner@example.test")).id);
+  const confirmed = await owner.post("/api/auth/email-verification/confirm").set("x-csrf-token", loginToken).send({ token });
+  assert.equal(confirmed.status, 204);
+  const replay = await owner.post("/api/auth/email-verification/confirm").set("x-csrf-token", loginToken).send({ token });
+  assert.equal(replay.status, 400);
+});
+
+test("retention policy is tenant-scoped, bounded, admin-only, and audited", async () => {
+  const { app, repo } = await fixture();
+  const owner = request.agent(app);
+  const member = request.agent(app);
+  const ownerToken = await login(owner, "owner@example.test");
+  const memberToken = await login(member, "member@example.test");
+  const denied = await member.patch("/api/organizations/org-a/privacy/retention").set("x-csrf-token", memberToken).send({ retentionDays: 90 });
+  assert.equal(denied.status, 403);
+  const invalid = await owner.patch("/api/organizations/org-a/privacy/retention").set("x-csrf-token", ownerToken).send({ retentionDays: 7 });
+  assert.equal(invalid.status, 400);
+  const updated = await owner.patch("/api/organizations/org-a/privacy/retention").set("x-csrf-token", ownerToken).send({ retentionDays: 730 });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.retentionDays, 730);
+  assert.equal(repo.audit.at(-1).action, "privacy.retention_updated");
+  assert.equal((await owner.get("/api/organizations/org-a")).body.organization.retentionDays, 730);
 });

@@ -68,24 +68,109 @@ function validateConversationUpdate(input) {
     && CONVERSATION_STATUSES.has(input.status)
     && (input.assigneeId === null || typeof input.assigneeId === "string");
 }
+function validateWebhookEndpoint(input) {
+  return input && typeof input === "object" && !Array.isArray(input)
+    && typeof input.name === "string" && input.name.trim().length > 0 && input.name.length <= 100
+    && typeof input.url === "string" && /^https:\/\//i.test(input.url) && input.url.length <= 2048;
+}
+function validateIdempotencyKey(value) {
+  return typeof value === "string" && /^[A-Za-z0-9._:-]{8,128}$/.test(value);
+}
+function redactAuditMetadata(metadata) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return {};
+  return Object.fromEntries(Object.entries(metadata).filter(([key]) => !/(secret|password|token|hash|ciphertext)/i.test(key)));
+}
+function validatePassword(password) {
+  return typeof password === "string" && password.length >= 12 && password.length <= 256;
+}
+function validateRetentionDays(value) {
+  return Number.isInteger(value) && value >= 30 && value <= 3650;
+}
+const SUBSCRIPTION_STATUSES = new Set(["trialing", "active", "past_due", "canceled", "incomplete"]);
+const BILLING_EVENT_TYPES = new Set(["subscription.updated", "subscription.deleted"]);
+function hashSecret(secret) {
+  return crypto.createHash("sha256").update(secret).digest("hex");
+}
+function hmacSignature(secret, timestamp, body) {
+  return crypto.createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("hex");
+}
+function encryptionKey() {
+  return crypto.createHash("sha256").update(env("WAKEEL_WEBHOOK_ENCRYPTION_KEY", env("WAKEEL_SESSION_SECRET", "development-only-change-me"))).digest();
+}
+function requestId() {
+  return `req_${crypto.randomBytes(12).toString("hex")}`;
+}
+function encryptSecret(secret) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", encryptionKey(), iv);
+  const ciphertext = Buffer.concat([cipher.update(secret, "utf8"), cipher.final()]);
+  return `${iv.toString("base64url")}.${cipher.getAuthTag().toString("base64url")}.${ciphertext.toString("base64url")}`;
+}
+function decryptSecret(payload) {
+  const [iv, tag, ciphertext] = String(payload).split(".").map((value) => Buffer.from(value, "base64url"));
+  const decipher = crypto.createDecipheriv("aes-256-gcm", encryptionKey(), iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+}
 
 function createMemoryRepository(seed = []) {
   const users = new Map();
   const organizations = new Map();
   const memberships = new Map();
   const audit = [];
+  const errorEvents = [];
   const agentConfigs = new Map();
   const knowledgeSources = new Map();
+  const ingestionJobs = new Map();
+  const subscriptions = new Map();
+  const billingEvents = new Set();
   const conversations = new Map();
+  const apiKeys = new Map();
+  const webhookEndpoints = new Map();
+  const webhookEvents = new Set();
+  const recoveryTokens = new Map();
+  const verificationTokens = new Map();
   for (const record of seed) {
-    const user = { id: record.userId || crypto.randomUUID(), email: record.email.toLowerCase(), passwordHash: record.passwordHash };
+    const user = { id: record.userId || crypto.randomUUID(), email: record.email.toLowerCase(), passwordHash: record.passwordHash, emailVerifiedAt: record.emailVerifiedAt || null };
     users.set(user.email, user);
-    organizations.set(record.organizationId, { id: record.organizationId, name: record.organizationName || record.organizationId });
+    organizations.set(record.organizationId, { id: record.organizationId, name: record.organizationName || record.organizationId, retentionDays: record.retentionDays || 365 });
     memberships.set(`${user.id}:${record.organizationId}`, { userId: user.id, organizationId: record.organizationId, role: record.role });
   }
   return {
     async findUserByEmail(email) { return users.get(String(email).toLowerCase()) || null; },
     async findUserById(id) { return [...users.values()].find((user) => user.id === id) || null; },
+    async issuePasswordRecovery(email) {
+      const user = users.get(String(email).toLowerCase());
+      if (!user) return null;
+      const token = crypto.randomBytes(32).toString("base64url");
+      recoveryTokens.set(hashSecret(token), { userId: user.id, expiresAt: Date.now() + 60 * 60 * 1000, usedAt: null });
+      return token;
+    },
+    async resetPassword(token, password) {
+      const record = recoveryTokens.get(hashSecret(token));
+      if (!record || record.usedAt || record.expiresAt <= Date.now() || !validatePassword(password)) return { ok: false, reason: "recovery_invalid" };
+      const user = [...users.values()].find((candidate) => candidate.id === record.userId);
+      if (!user) return { ok: false, reason: "recovery_invalid" };
+      user.passwordHash = await bcrypt.hash(password, 12);
+      record.usedAt = Date.now();
+      return { ok: true };
+    },
+    async issueEmailVerification(userId) {
+      const user = [...users.values()].find((candidate) => candidate.id === userId);
+      if (!user) return null;
+      const token = crypto.randomBytes(32).toString("base64url");
+      verificationTokens.set(hashSecret(token), { userId, expiresAt: Date.now() + 24 * 60 * 60 * 1000, usedAt: null });
+      return token;
+    },
+    async confirmEmailVerification(token) {
+      const record = verificationTokens.get(hashSecret(token));
+      if (!record || record.usedAt || record.expiresAt <= Date.now()) return { ok: false, reason: "verification_invalid" };
+      const user = [...users.values()].find((candidate) => candidate.id === record.userId);
+      if (!user) return { ok: false, reason: "verification_invalid" };
+      user.emailVerifiedAt = new Date().toISOString();
+      record.usedAt = Date.now();
+      return { ok: true };
+    },
     async membershipsForUser(userId) { return [...memberships.values()].filter((item) => item.userId === userId); },
     async membership(userId, organizationId) { return memberships.get(`${userId}:${organizationId}`) || null; },
     async updateMembership(actor, targetUserId, organizationId, role) {
@@ -102,6 +187,15 @@ function createMemoryRepository(seed = []) {
       const member = memberships.get(`${userId}:${organizationId}`);
       if (!member) return null;
       return { organization: organizations.get(organizationId), membership: member };
+    },
+    async updateRetentionPolicy(actor, organizationId, retentionDays) {
+      const member = memberships.get(`${actor.id}:${organizationId}`);
+      if (!member || ROLES[member.role] < ROLES.admin) return { ok: false, reason: "forbidden" };
+      if (!validateRetentionDays(retentionDays)) return { ok: false, reason: "retention_invalid" };
+      const organization = organizations.get(organizationId);
+      organization.retentionDays = retentionDays;
+      audit.push({ action: "privacy.retention_updated", organizationId, actorId: actor.id, metadata: { retentionDays } });
+      return { ok: true, retentionDays };
     },
     async agentConfig(userId, organizationId) {
       if (!memberships.has(`${userId}:${organizationId}`)) return null;
@@ -121,12 +215,21 @@ function createMemoryRepository(seed = []) {
     async createKnowledgeSource(actor, organizationId, input) {
       const member = memberships.get(`${actor.id}:${organizationId}`);
       if (!member || ROLES[member.role] < ROLES.admin) return { ok: false, reason: "forbidden" };
+      const idempotencyKey = input.idempotencyKey || null;
+      const existingJob = idempotencyKey && ingestionJobs.get(`${organizationId}:${idempotencyKey}`);
+      if (existingJob) {
+        const existingSource = knowledgeSources.get(existingJob.sourceId);
+        return { ok: true, source: existingSource, job: existingJob };
+      }
       const id = crypto.randomUUID();
       const injectionDetected = detectPromptInjection(input.content);
       const source = { id, organizationId, ...input, locator: input.locator || null, status: injectionDetected ? "quarantined" : "pending", promptInjectionDetected: injectionDetected, createdBy: actor.id };
       knowledgeSources.set(id, source);
       audit.push({ action: "knowledge.source_created", organizationId, actorId: actor.id, sourceId: id, status: source.status });
-      return { ok: true, source };
+      const jobKey = `${organizationId}:${idempotencyKey || `knowledge:${id}`}`;
+      const job = { id: crypto.randomUUID(), organizationId, type: "knowledge.ingest", idempotencyKey, sourceId: id, status: "queued", attempts: 0, createdAt: new Date().toISOString() };
+      ingestionJobs.set(jobKey, job);
+      return { ok: true, source, job };
     },
     async listConversations(userId, organizationId) {
       if (!memberships.has(`${userId}:${organizationId}`)) return null;
@@ -159,7 +262,79 @@ function createMemoryRepository(seed = []) {
         byChannel: Object.fromEntries(["web", "email", "whatsapp", "manual"].map((channel) => [channel, rows.filter((item) => item.channel === channel).length]))
       };
     },
-    audit
+    async createApiKey(actor, organizationId, input) {
+      const member = memberships.get(`${actor.id}:${organizationId}`);
+      if (!member || ROLES[member.role] < ROLES.admin) return { ok: false, reason: "forbidden" };
+      const secret = `wk_live_${crypto.randomBytes(24).toString("base64url")}`;
+      const record = { id: crypto.randomUUID(), organizationId, name: input.name, keyHash: hashSecret(secret), createdBy: actor.id, createdAt: new Date().toISOString() };
+      apiKeys.set(record.id, record);
+      audit.push({ action: "api_key.created", organizationId, actorId: actor.id, apiKeyId: record.id });
+      return { ok: true, key: { id: record.id, name: record.name, secret } };
+    },
+    async listApiKeys(userId, organizationId) {
+      if (!memberships.has(`${userId}:${organizationId}`)) return null;
+      return [...apiKeys.values()]
+        .filter((key) => key.organizationId === organizationId)
+        .map(({ keyHash, ...metadata }) => ({ ...metadata, revokedAt: metadata.revokedAt || null }));
+    },
+    async revokeApiKey(actor, organizationId, keyId) {
+      const member = memberships.get(`${actor.id}:${organizationId}`);
+      const key = apiKeys.get(keyId);
+      if (!member || !key || key.organizationId !== organizationId) return { ok: false, reason: "not_found" };
+      if (ROLES[member.role] < ROLES.admin) return { ok: false, reason: "forbidden" };
+      if (key.revokedAt) return { ok: false, reason: "already_revoked" };
+      key.revokedAt = new Date().toISOString();
+      audit.push({ action: "api_key.revoked", organizationId, actorId: actor.id, apiKeyId: keyId });
+      return { ok: true };
+    },
+    async recordErrorEvent(event) {
+      errorEvents.push({ id: crypto.randomUUID(), ...event, createdAt: new Date().toISOString() });
+    },
+    async readiness() {
+      return { ok: true, database: "memory" };
+    },
+    async createWebhookEndpoint(actor, organizationId, input) {
+      const member = memberships.get(`${actor.id}:${organizationId}`);
+      if (!member || ROLES[member.role] < ROLES.admin) return { ok: false, reason: "forbidden" };
+      const secret = `whsec_${crypto.randomBytes(24).toString("base64url")}`;
+      const record = { id: crypto.randomUUID(), organizationId, name: input.name, url: input.url, secretHash: hashSecret(secret), secret, enabled: true };
+      webhookEndpoints.set(record.id, record);
+      audit.push({ action: "webhook.created", organizationId, actorId: actor.id, endpointId: record.id });
+      return { ok: true, endpoint: { id: record.id, name: record.name, url: record.url, secret } };
+    },
+    async verifyWebhook(endpointId, eventId, signature, timestamp, body) {
+      const endpoint = webhookEndpoints.get(endpointId);
+      if (!endpoint || !endpoint.enabled || !eventId || !signature || !timestamp || webhookEvents.has(`${endpointId}:${eventId}`)) return { ok: false, reason: "replay_or_unknown" };
+      const expected = hmacSignature(endpoint.secret, timestamp, body);
+      if (!safeEqual(signature, expected) || Math.abs(Date.now() - Number(timestamp) * 1000) > 5 * 60 * 1000) return { ok: false, reason: "signature_invalid" };
+      webhookEvents.add(`${endpointId}:${eventId}`);
+      return { ok: true, organizationId: endpoint.organizationId };
+    },
+    async subscription(userId, organizationId) {
+      if (!memberships.has(`${userId}:${organizationId}`)) return null;
+      return subscriptions.get(organizationId) || { organizationId, status: "incomplete", plan: null, provider: null };
+    },
+    async applyBillingEvent(organizationId, eventId, event) {
+      if (billingEvents.has(`${organizationId}:${eventId}`)) return { ok: false, reason: "duplicate" };
+      if (!event || !BILLING_EVENT_TYPES.has(event.type) || !event.subscription || typeof event.subscription !== "object") return { ok: false, reason: "billing_event_invalid" };
+      const subscription = event.subscription;
+      if (typeof subscription.status !== "string" || !SUBSCRIPTION_STATUSES.has(subscription.status) || typeof subscription.plan !== "string" || subscription.plan.length > 100) return { ok: false, reason: "billing_event_invalid" };
+      const record = { organizationId, status: subscription.status, plan: subscription.plan, provider: typeof subscription.provider === "string" ? subscription.provider : null, providerSubscriptionId: typeof subscription.providerSubscriptionId === "string" ? subscription.providerSubscriptionId : null, currentPeriodEnd: subscription.currentPeriodEnd || null, updatedAt: new Date().toISOString() };
+      subscriptions.set(organizationId, record);
+      billingEvents.add(`${organizationId}:${eventId}`);
+      audit.push({ action: "billing.subscription_updated", organizationId, eventId, status: record.status, plan: record.plan });
+      return { ok: true, subscription: record };
+    },
+    async listAuditEvents(userId, organizationId, limit = 100) {
+      const member = memberships.get(`${userId}:${organizationId}`);
+      if (!member || ROLES[member.role] < ROLES.admin) return null;
+      return audit.filter((event) => event.organizationId === organizationId).slice(-limit).reverse().map((event) => ({
+        ...event,
+        metadata: redactAuditMetadata(event.metadata)
+      }));
+    },
+    audit,
+    errorEvents
   };
 }
 
@@ -187,6 +362,43 @@ function createPostgresRepository(pool) {
     async findUserById(id) {
       const result = await pool.query("SELECT id, email, password_hash AS \"passwordHash\" FROM users WHERE id = $1", [id]);
       return result.rows[0] || null;
+    },
+    async issuePasswordRecovery(email) {
+      const userResult = await pool.query("SELECT id FROM users WHERE lower(email) = lower($1)", [email]);
+      if (!userResult.rows[0]) return null;
+      const token = crypto.randomBytes(32).toString("base64url");
+      await pool.query("INSERT INTO password_recovery_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '1 hour')", [userResult.rows[0].id, hashSecret(token)]);
+      return token;
+    },
+    async resetPassword(token, password) {
+      if (!validatePassword(password)) return { ok: false, reason: "recovery_invalid" };
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const result = await client.query("SELECT user_id FROM password_recovery_tokens WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now() FOR UPDATE", [hashSecret(token)]);
+        if (!result.rows[0]) { await client.query("ROLLBACK"); return { ok: false, reason: "recovery_invalid" }; }
+        const passwordHash = await bcrypt.hash(password, 12);
+        await client.query("UPDATE users SET password_hash = $1 WHERE id = $2", [passwordHash, result.rows[0].user_id]);
+        await client.query("UPDATE password_recovery_tokens SET used_at = now() WHERE token_hash = $1", [hashSecret(token)]);
+        await client.query("COMMIT");
+        return { ok: true };
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+    async issueEmailVerification(userId) {
+      const userResult = await pool.query("SELECT id FROM users WHERE id = $1", [userId]);
+      if (!userResult.rows[0]) return null;
+      const token = crypto.randomBytes(32).toString("base64url");
+      await pool.query("INSERT INTO email_verification_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '24 hours')", [userId, hashSecret(token)]);
+      return token;
+    },
+    async confirmEmailVerification(token) {
+      const result = await pool.query("SELECT app_consume_email_verification($1) AS user_id", [hashSecret(token)]);
+      return result.rows[0] && result.rows[0].user_id ? { ok: true } : { ok: false, reason: "verification_invalid" };
     },
     async membershipsForUser(userId) {
       return withUserContext(userId, async (client) => {
@@ -216,6 +428,17 @@ function createPostgresRepository(pool) {
       return withUserContext(userId, async (client) => {
         const result = await client.query("SELECT o.id, o.name, m.role FROM organizations o JOIN memberships m ON m.organization_id = o.id WHERE o.id = $1", [organizationId]);
         return result.rows[0] || null;
+      });
+    },
+    async updateRetentionPolicy(actor, organizationId, retentionDays) {
+      if (!validateRetentionDays(retentionDays)) return { ok: false, reason: "retention_invalid" };
+      return withUserContext(actor.id, async (client) => {
+        const roleResult = await client.query("SELECT role FROM memberships WHERE organization_id = $1", [organizationId]);
+        if (!roleResult.rows[0] || ROLES[roleResult.rows[0].role] < ROLES.admin) return { ok: false, reason: "forbidden" };
+        const result = await client.query("UPDATE organizations SET retention_days = $1 WHERE id = $2 RETURNING retention_days AS \"retentionDays\"", [retentionDays, organizationId]);
+        if (!result.rowCount) return { ok: false, reason: "not_found" };
+        await client.query("INSERT INTO audit_events (organization_id, actor_id, action, metadata) VALUES ($1, $2, $3, $4)", [organizationId, actor.id, "privacy.retention_updated", JSON.stringify({ retentionDays })]);
+        return { ok: true, retentionDays: result.rows[0].retentionDays };
       });
     },
     async agentConfig(userId, organizationId) {
@@ -255,7 +478,12 @@ function createPostgresRepository(pool) {
           [organizationId, input.name, input.sourceType, input.locator || null, input.content, status, injectionDetected, actor.id]
         );
         await client.query("INSERT INTO audit_events (organization_id, actor_id, action, metadata) VALUES ($1, $2, $3, $4)", [organizationId, actor.id, "knowledge.source_created", JSON.stringify({ sourceId: result.rows[0].id, status })]);
-        return { ok: true, source: result.rows[0] };
+        const idempotencyKey = input.idempotencyKey || `knowledge:${result.rows[0].id}`;
+        const jobResult = await client.query(
+          "INSERT INTO background_jobs (organization_id, type, idempotency_key, payload) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (organization_id, idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING id, organization_id AS \"organizationId\", type, idempotency_key AS \"idempotencyKey\", payload->>'sourceId' AS \"sourceId\", status, attempts, created_at AS \"createdAt\"",
+          [organizationId, "knowledge.ingest", idempotencyKey, JSON.stringify({ sourceId: result.rows[0].id })]
+        );
+        return { ok: true, source: result.rows[0], job: jobResult.rows[0] };
       });
     },
     async listConversations(userId, organizationId) {
@@ -292,6 +520,92 @@ function createPostgresRepository(pool) {
         }
         return analytics;
       });
+    },
+    async createApiKey(actor, organizationId, input) {
+      return withUserContext(actor.id, async (client) => {
+        const roleResult = await client.query("SELECT role FROM memberships WHERE organization_id = $1", [organizationId]);
+        if (!roleResult.rows[0] || ROLES[roleResult.rows[0].role] < ROLES.admin) return { ok: false, reason: "forbidden" };
+        const secret = `wk_live_${crypto.randomBytes(24).toString("base64url")}`;
+        const result = await client.query("INSERT INTO api_keys (organization_id, name, key_hash, created_by) VALUES ($1, $2, $3, $4) RETURNING id, name", [organizationId, input.name, hashSecret(secret), actor.id]);
+        await client.query("INSERT INTO audit_events (organization_id, actor_id, action, metadata) VALUES ($1, $2, $3, $4)", [organizationId, actor.id, "api_key.created", JSON.stringify({ apiKeyId: result.rows[0].id })]);
+        return { ok: true, key: { ...result.rows[0], secret } };
+      });
+    },
+    async listApiKeys(userId, organizationId) {
+      return withUserContext(userId, async (client) => {
+        const result = await client.query("SELECT id, name, created_by AS \"createdBy\", created_at AS \"createdAt\", revoked_at AS \"revokedAt\" FROM api_keys WHERE organization_id = $1 ORDER BY created_at DESC", [organizationId]);
+        return result.rows;
+      });
+    },
+    async revokeApiKey(actor, organizationId, keyId) {
+      return withUserContext(actor.id, async (client) => {
+        const roleResult = await client.query("SELECT role FROM memberships WHERE organization_id = $1", [organizationId]);
+        if (!roleResult.rows[0] || ROLES[roleResult.rows[0].role] < ROLES.admin) return { ok: false, reason: "forbidden" };
+        const result = await client.query("UPDATE api_keys SET revoked_at = now() WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id", [keyId, organizationId]);
+        if (!result.rowCount) {
+          const existing = await client.query("SELECT id FROM api_keys WHERE id = $1 AND organization_id = $2", [keyId, organizationId]);
+          return { ok: false, reason: existing.rowCount ? "already_revoked" : "not_found" };
+        }
+        await client.query("INSERT INTO audit_events (organization_id, actor_id, action, metadata) VALUES ($1, $2, $3, $4)", [organizationId, actor.id, "api_key.revoked", JSON.stringify({ apiKeyId: keyId })]);
+        return { ok: true };
+      });
+    },
+    async recordErrorEvent(event) {
+      await pool.query("INSERT INTO error_events (organization_id, actor_id, request_id, error_code, method, path, status, metadata) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", [event.organizationId || null, event.actorId || null, event.requestId, event.errorCode, event.method, event.path, event.status, JSON.stringify(event.metadata || {})]);
+    },
+    async readiness() {
+      await pool.query("SELECT 1");
+      return { ok: true, database: "postgres" };
+    },
+    async createWebhookEndpoint(actor, organizationId, input) {
+      return withUserContext(actor.id, async (client) => {
+        const roleResult = await client.query("SELECT role FROM memberships WHERE organization_id = $1", [organizationId]);
+        if (!roleResult.rows[0] || ROLES[roleResult.rows[0].role] < ROLES.admin) return { ok: false, reason: "forbidden" };
+        const secret = `whsec_${crypto.randomBytes(24).toString("base64url")}`;
+        const result = await client.query("INSERT INTO webhook_endpoints (organization_id, name, url, secret_hash, secret_ciphertext, created_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, name, url", [organizationId, input.name, input.url, hashSecret(secret), encryptSecret(secret), actor.id]);
+        await client.query("INSERT INTO audit_events (organization_id, actor_id, action, metadata) VALUES ($1, $2, $3, $4)", [organizationId, actor.id, "webhook.created", JSON.stringify({ endpointId: result.rows[0].id })]);
+        return { ok: true, endpoint: { ...result.rows[0], secret } };
+      });
+    },
+    async verifyWebhook(endpointId, eventId, signature, timestamp, body) {
+      const result = await pool.query("SELECT id, organization_id, secret_ciphertext, enabled FROM webhook_endpoints WHERE id = $1", [endpointId]);
+      const endpoint = result.rows[0];
+      if (!endpoint || !endpoint.enabled || !eventId || !signature || !timestamp) return { ok: false, reason: "replay_or_unknown" };
+      if (Math.abs(Date.now() - Number(timestamp) * 1000) > 5 * 60 * 1000) return { ok: false, reason: "signature_invalid" };
+      const expected = hmacSignature(decryptSecret(endpoint.secret_ciphertext), timestamp, body);
+      if (!safeEqual(signature, expected)) return { ok: false, reason: "signature_invalid" };
+      const replay = await pool.query("SELECT app_record_webhook_event($1, $2) AS accepted", [endpointId, eventId]);
+      return replay.rows[0].accepted ? { ok: true, organizationId: endpoint.organization_id } : { ok: false, reason: "replay_or_unknown" };
+    },
+    async subscription(userId, organizationId) {
+      return withUserContext(userId, async (client) => {
+        const result = await client.query("SELECT organization_id AS \"organizationId\", plan, status, provider, provider_subscription_id AS \"providerSubscriptionId\", current_period_end AS \"currentPeriodEnd\", updated_at AS \"updatedAt\" FROM subscriptions WHERE organization_id = $1", [organizationId]);
+        return result.rows[0] || { organizationId, status: "incomplete", plan: null, provider: null };
+      });
+    },
+    async applyBillingEvent(organizationId, eventId, event) {
+      if (!event || !BILLING_EVENT_TYPES.has(event.type) || !event.subscription || typeof event.subscription !== "object") return { ok: false, reason: "billing_event_invalid" };
+      const subscription = event.subscription;
+      if (typeof subscription.status !== "string" || !SUBSCRIPTION_STATUSES.has(subscription.status) || typeof subscription.plan !== "string" || subscription.plan.length > 100) return { ok: false, reason: "billing_event_invalid" };
+      return pool.query(
+        "INSERT INTO billing_events (organization_id, event_id, event_type, payload) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (organization_id, event_id) DO NOTHING RETURNING event_id",
+        [organizationId, eventId, event.type, JSON.stringify(event)]
+      ).then(async (eventResult) => {
+        if (!eventResult.rowCount) return { ok: false, reason: "duplicate" };
+        const result = await pool.query(
+          "INSERT INTO subscriptions (organization_id, plan, status, provider, provider_subscription_id, current_period_end) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (organization_id) DO UPDATE SET plan = EXCLUDED.plan, status = EXCLUDED.status, provider = EXCLUDED.provider, provider_subscription_id = EXCLUDED.provider_subscription_id, current_period_end = EXCLUDED.current_period_end, updated_at = now() RETURNING organization_id AS \"organizationId\", plan, status, provider, provider_subscription_id AS \"providerSubscriptionId\", current_period_end AS \"currentPeriodEnd\", updated_at AS \"updatedAt\"",
+          [organizationId, subscription.plan, subscription.status, subscription.provider || null, subscription.providerSubscriptionId || null, subscription.currentPeriodEnd || null]
+        );
+        return { ok: true, subscription: result.rows[0] };
+      });
+    },
+    async listAuditEvents(userId, organizationId, limit = 100) {
+      return withUserContext(userId, async (client) => {
+        const roleResult = await client.query("SELECT role FROM memberships WHERE organization_id = $1", [organizationId]);
+        if (!roleResult.rows[0] || ROLES[roleResult.rows[0].role] < ROLES.admin) return null;
+        const result = await client.query("SELECT id, organization_id AS \"organizationId\", actor_id AS \"actorId\", action, metadata, created_at AS \"createdAt\" FROM audit_events WHERE organization_id = $1 ORDER BY created_at DESC LIMIT $2", [organizationId, limit]);
+        return result.rows.map((event) => ({ ...event, metadata: redactAuditMetadata(event.metadata) }));
+      });
     }
   };
 }
@@ -302,6 +616,11 @@ function createApp({ repository, sessionStore, allowDevLogin = false } = {}) {
   const passport = new Passport();
   const loginAttempts = new Map();
   app.disable("x-powered-by");
+  app.use((req, res, next) => {
+    req.requestId = requestId();
+    res.set("X-Request-Id", req.requestId);
+    next();
+  });
   app.use((_req, res, next) => {
     res.set({
       "Content-Security-Policy": "default-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
@@ -369,9 +688,31 @@ function createApp({ repository, sessionStore, allowDevLogin = false } = {}) {
     if (!req.membership || ROLES[req.membership.role] < ROLES[minimum]) return res.status(403).json({ error: "role_not_allowed" });
     next();
   };
-  app.use("/api", requireCsrf);
+  app.use("/api", (req, res, next) => req.path.startsWith("/webhooks/") ? next() : requireCsrf(req, res, next));
 
-  app.get("/health", (_req, res) => res.json({ ok: true }));
+  app.get("/health", (_req, res) => res.json({ ok: true, status: "live" }));
+  app.get("/health/live", (_req, res) => res.json({ ok: true, status: "live" }));
+  app.get("/health/ready", async (_req, res, next) => {
+    try {
+      const readiness = await repo.readiness();
+      res.json({ ...readiness, status: "ready" });
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/webhooks/:endpointId", express.raw({ type: "application/json", limit: "100kb" }), async (req, res) => {
+    const body = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : JSON.stringify(req.body || {});
+    const eventId = req.get("x-wakeel-event-id");
+    const result = await repo.verifyWebhook(req.params.endpointId, eventId, req.get("x-wakeel-signature"), req.get("x-wakeel-timestamp"), body);
+    if (!result.ok) return res.status(result.reason === "replay_or_unknown" ? 409 : 401).json({ error: result.reason });
+    let event;
+    try { event = JSON.parse(body); } catch (_error) { return res.status(400).json({ error: "webhook_payload_invalid" }); }
+    if (event.type && event.type.startsWith("subscription.")) {
+      const billing = await repo.applyBillingEvent(result.organizationId, eventId, event);
+      if (!billing.ok) return res.status(billing.reason === "duplicate" ? 409 : 400).json({ error: billing.reason });
+    }
+    return res.status(202).json({ accepted: true });
+  });
   app.get("/api/auth/csrf", (req, res, next) => {
     req.session.save((error) => {
       if (error) return next(error);
@@ -392,6 +733,41 @@ function createApp({ repository, sessionStore, allowDevLogin = false } = {}) {
       });
     })(req, res, next);
   });
+  app.post("/api/auth/password-recovery/request", async (req, res, next) => {
+    if (!validateEmail(req.body && req.body.email)) return res.status(400).json({ error: "email_invalid" });
+    try {
+      await repo.issuePasswordRecovery(req.body.email);
+      res.status(202).json({ accepted: true });
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/auth/password-recovery/reset", async (req, res, next) => {
+    if (!req.body || typeof req.body.token !== "string" || req.body.token.length < 32 || !validatePassword(req.body.password)) return res.status(400).json({ error: "recovery_invalid" });
+    try {
+      const result = await repo.resetPassword(req.body.token, req.body.password);
+      return result.ok ? res.status(204).end() : res.status(400).json({ error: result.reason });
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/auth/email-verification/request", requireAuth, async (req, res, next) => {
+    try {
+      await repo.issueEmailVerification(req.user.id);
+      res.status(202).json({ accepted: true });
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/auth/email-verification/confirm", async (req, res, next) => {
+    if (!req.body || typeof req.body.token !== "string" || req.body.token.length < 32) return res.status(400).json({ error: "verification_invalid" });
+    try {
+      const result = await repo.confirmEmailVerification(req.body.token);
+      return result.ok ? res.status(204).end() : res.status(400).json({ error: result.reason });
+    } catch (error) {
+      next(error);
+    }
+  });
   app.post("/api/auth/dev-login", async (req, res, next) => {
     if (!allowDevLogin) return res.status(404).json({ error: "not_found" });
     if (!validateEmail(req.body.email)) return res.status(400).json({ error: "email_invalid" });
@@ -407,6 +783,10 @@ function createApp({ repository, sessionStore, allowDevLogin = false } = {}) {
   app.get("/api/auth/session", (req, res) => res.json({ authenticated: Boolean(req.user), user: req.user ? { id: req.user.id, email: req.user.email } : null }));
   app.get("/api/organizations", requireAuth, async (req, res) => res.json({ organizations: await repo.membershipsForUser(req.user.id) }));
   app.get("/api/organizations/:organizationId", requireAuth, requireMembership, async (req, res) => res.json(await repo.organizationData(req.user.id, req.organizationId)));
+  app.patch("/api/organizations/:organizationId/privacy/retention", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
+    const result = await repo.updateRetentionPolicy(req.user, req.organizationId, req.body && req.body.retentionDays);
+    return result.ok ? res.json(result) : res.status(result.reason === "forbidden" ? 403 : 400).json({ error: result.reason });
+  });
   app.get("/api/organizations/:organizationId/agent", requireAuth, requireMembership, async (req, res) => res.json(await repo.agentConfig(req.user.id, req.organizationId)));
   app.put("/api/organizations/:organizationId/agent", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
     if (!validateAgentConfig(req.body)) return res.status(400).json({ error: "agent_config_invalid" });
@@ -418,8 +798,10 @@ function createApp({ repository, sessionStore, allowDevLogin = false } = {}) {
   });
   app.post("/api/organizations/:organizationId/knowledge", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
     if (!validateKnowledgeSource(req.body)) return res.status(400).json({ error: "knowledge_source_invalid" });
-    const result = await repo.createKnowledgeSource(req.user, req.organizationId, req.body);
-    return result.ok ? res.status(201).json(result.source) : res.status(403).json({ error: result.reason });
+    const idempotencyKey = req.get("x-idempotency-key");
+    if (idempotencyKey && !validateIdempotencyKey(idempotencyKey)) return res.status(400).json({ error: "idempotency_key_invalid" });
+    const result = await repo.createKnowledgeSource(req.user, req.organizationId, { ...req.body, idempotencyKey });
+    return result.ok ? res.status(201).json({ ...result.source, job: result.job }) : res.status(403).json({ error: result.reason });
   });
   app.get("/api/organizations/:organizationId/conversations", requireAuth, requireMembership, async (req, res) => {
     res.json({ conversations: await repo.listConversations(req.user.id, req.organizationId) });
@@ -437,12 +819,58 @@ function createApp({ repository, sessionStore, allowDevLogin = false } = {}) {
   app.get("/api/organizations/:organizationId/analytics/conversations", requireAuth, requireMembership, async (req, res) => {
     res.json(await repo.conversationAnalytics(req.user.id, req.organizationId));
   });
+  app.get("/api/organizations/:organizationId/subscription", requireAuth, requireMembership, async (req, res) => {
+    res.json(await repo.subscription(req.user.id, req.organizationId));
+  });
+  app.get("/api/organizations/:organizationId/audit", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
+    const requestedLimit = Number.parseInt(req.query.limit, 10);
+    const limit = Number.isInteger(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 100) : 100;
+    res.json({ events: await repo.listAuditEvents(req.user.id, req.organizationId, limit) });
+  });
+  app.post("/api/organizations/:organizationId/api-keys", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
+    if (!req.body || typeof req.body.name !== "string" || req.body.name.trim().length < 1 || req.body.name.length > 100) return res.status(400).json({ error: "api_key_invalid" });
+    const result = await repo.createApiKey(req.user, req.organizationId, req.body);
+    return result.ok ? res.status(201).json(result.key) : res.status(403).json({ error: result.reason });
+  });
+  app.get("/api/organizations/:organizationId/api-keys", requireAuth, requireMembership, async (req, res) => {
+    res.json({ keys: await repo.listApiKeys(req.user.id, req.organizationId) });
+  });
+  app.delete("/api/organizations/:organizationId/api-keys/:keyId", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
+    const result = await repo.revokeApiKey(req.user, req.organizationId, req.params.keyId);
+    if (result.ok) return res.status(204).end();
+    return res.status(result.reason === "forbidden" ? 403 : result.reason === "already_revoked" ? 409 : 404).json({ error: result.reason });
+  });
+  app.post("/api/organizations/:organizationId/webhooks", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
+    if (!validateWebhookEndpoint(req.body)) return res.status(400).json({ error: "webhook_invalid" });
+    const result = await repo.createWebhookEndpoint(req.user, req.organizationId, req.body);
+    return result.ok ? res.status(201).json(result.endpoint) : res.status(403).json({ error: result.reason });
+  });
   app.patch("/api/organizations/:organizationId/members/:targetUserId", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
     if (!validateRole(req.body.role)) return res.status(400).json({ error: "role_invalid" });
     const result = await repo.updateMembership(req.user, req.params.targetUserId, req.organizationId, req.body.role);
     return result.ok ? res.json({ ok: true }) : res.status(result.reason === "forbidden" ? 403 : 404).json({ error: result.reason });
   });
   app.use(express.static(path.join(__dirname)));
+  app.use(async (error, req, res, _next) => {
+    const status = Number.isInteger(error.status) && error.status >= 400 && error.status < 600 ? error.status : 500;
+    const errorCode = status === 500 ? "internal_error" : "request_error";
+    try {
+      await repo.recordErrorEvent({
+        organizationId: req.organizationId,
+        actorId: req.user && req.user.id,
+        requestId: req.requestId,
+        errorCode,
+        method: req.method,
+        path: req.path,
+        status,
+        metadata: { message: status === 500 ? "Unhandled server error" : String(error.message || "Request failed").slice(0, 200) }
+      });
+    } catch (recordError) {
+      console.error("error_event_persistence_failed", recordError.message);
+    }
+    if (res.headersSent) return;
+    res.status(status).json({ error: errorCode, requestId: req.requestId });
+  });
   return app;
 }
 

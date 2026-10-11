@@ -10,6 +10,15 @@
 - PostgreSQL repository organization queries run inside transactions that set `app.current_user_id` with transaction-local `set_config`; migration policies deny rows without that context.
 - Knowledge content is bounded and is never treated as trusted instructions: simple prompt-injection indicators quarantine a source before any future indexing step.
 - Conversation content is bounded plain text and is returned only from the create response; list and lifecycle responses expose metadata without customer message bodies.
+- API key secrets are returned only at creation and stored hashed. Webhook secrets are returned only at registration, encrypted at rest for future HMAC verification, and protected by timestamp tolerance plus persistent event-id replay checks.
+- API-key metadata listing is tenant-scoped and never returns hashes; revocation is admin-only, persisted, and audited. The current slice does not yet authenticate inbound API requests with these keys.
+- Error responses expose only a request ID and stable error code; server-side error events persist bounded metadata without stack traces or secrets. Tenant-associated events are RLS-scoped.
+- Knowledge ingestion requests may provide a bounded idempotency key. Jobs are unique per tenant/key and only queued; no fetch, parsing, embedding, or provider execution is claimed.
+- Subscription state has no local checkout or payment success path. It changes only after webhook signature and replay validation, with tenant-scoped state and billing-event records.
+- Audit retrieval is restricted to tenant admins, bounded to 100 records per request, and removes metadata keys that resemble secrets, tokens, hashes, passwords, or ciphertext.
+- Password recovery tokens are random, stored only as hashes, expire after one hour, and are single-use. Requests return a generic accepted response; email delivery and account verification remain external integration boundaries.
+- Email-verification tokens are random, stored only as hashes, expire after 24 hours, and are single-use. The confirmation path marks the user verified only after token validation; delivery is not implemented.
+- Each tenant has a bounded retention policy defaulting to 365 days. Admin updates are audited; this slice does not run deletion and never silently removes customer data.
 - Production startup fails without a database URL or a session secret of at least 32 characters.
 - Organization routes require an authenticated user and a membership in the path organization.
 - Role mutation requires `admin` or `owner` privilege and writes an audit event through the repository adapter.
