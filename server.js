@@ -82,6 +82,9 @@ function hmacSignature(secret, timestamp, body) {
 function encryptionKey() {
   return crypto.createHash("sha256").update(env("WAKEEL_WEBHOOK_ENCRYPTION_KEY", env("WAKEEL_SESSION_SECRET", "development-only-change-me"))).digest();
 }
+function requestId() {
+  return `req_${crypto.randomBytes(12).toString("hex")}`;
+}
 function encryptSecret(secret) {
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", encryptionKey(), iv);
@@ -100,6 +103,7 @@ function createMemoryRepository(seed = []) {
   const organizations = new Map();
   const memberships = new Map();
   const audit = [];
+  const errorEvents = [];
   const agentConfigs = new Map();
   const knowledgeSources = new Map();
   const conversations = new Map();
@@ -213,6 +217,12 @@ function createMemoryRepository(seed = []) {
       audit.push({ action: "api_key.revoked", organizationId, actorId: actor.id, apiKeyId: keyId });
       return { ok: true };
     },
+    async recordErrorEvent(event) {
+      errorEvents.push({ id: crypto.randomUUID(), ...event, createdAt: new Date().toISOString() });
+    },
+    async readiness() {
+      return { ok: true, database: "memory" };
+    },
     async createWebhookEndpoint(actor, organizationId, input) {
       const member = memberships.get(`${actor.id}:${organizationId}`);
       if (!member || ROLES[member.role] < ROLES.admin) return { ok: false, reason: "forbidden" };
@@ -230,7 +240,8 @@ function createMemoryRepository(seed = []) {
       webhookEvents.add(`${endpointId}:${eventId}`);
       return { ok: true, organizationId: endpoint.organizationId };
     },
-    audit
+    audit,
+    errorEvents
   };
 }
 
@@ -393,6 +404,13 @@ function createPostgresRepository(pool) {
         return { ok: true };
       });
     },
+    async recordErrorEvent(event) {
+      await pool.query("INSERT INTO error_events (organization_id, actor_id, request_id, error_code, method, path, status, metadata) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", [event.organizationId || null, event.actorId || null, event.requestId, event.errorCode, event.method, event.path, event.status, JSON.stringify(event.metadata || {})]);
+    },
+    async readiness() {
+      await pool.query("SELECT 1");
+      return { ok: true, database: "postgres" };
+    },
     async createWebhookEndpoint(actor, organizationId, input) {
       return withUserContext(actor.id, async (client) => {
         const roleResult = await client.query("SELECT role FROM memberships WHERE organization_id = $1", [organizationId]);
@@ -422,6 +440,11 @@ function createApp({ repository, sessionStore, allowDevLogin = false } = {}) {
   const passport = new Passport();
   const loginAttempts = new Map();
   app.disable("x-powered-by");
+  app.use((req, res, next) => {
+    req.requestId = requestId();
+    res.set("X-Request-Id", req.requestId);
+    next();
+  });
   app.use((_req, res, next) => {
     res.set({
       "Content-Security-Policy": "default-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
@@ -491,7 +514,16 @@ function createApp({ repository, sessionStore, allowDevLogin = false } = {}) {
   };
   app.use("/api", (req, res, next) => req.path.startsWith("/webhooks/") ? next() : requireCsrf(req, res, next));
 
-  app.get("/health", (_req, res) => res.json({ ok: true }));
+  app.get("/health", (_req, res) => res.json({ ok: true, status: "live" }));
+  app.get("/health/live", (_req, res) => res.json({ ok: true, status: "live" }));
+  app.get("/health/ready", async (_req, res, next) => {
+    try {
+      const readiness = await repo.readiness();
+      res.json({ ...readiness, status: "ready" });
+    } catch (error) {
+      next(error);
+    }
+  });
   app.post("/api/webhooks/:endpointId", express.raw({ type: "application/json", limit: "100kb" }), async (req, res) => {
     const body = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : JSON.stringify(req.body || {});
     const result = await repo.verifyWebhook(req.params.endpointId, req.get("x-wakeel-event-id"), req.get("x-wakeel-signature"), req.get("x-wakeel-timestamp"), body);
@@ -586,6 +618,26 @@ function createApp({ repository, sessionStore, allowDevLogin = false } = {}) {
     return result.ok ? res.json({ ok: true }) : res.status(result.reason === "forbidden" ? 403 : 404).json({ error: result.reason });
   });
   app.use(express.static(path.join(__dirname)));
+  app.use(async (error, req, res, _next) => {
+    const status = Number.isInteger(error.status) && error.status >= 400 && error.status < 600 ? error.status : 500;
+    const errorCode = status === 500 ? "internal_error" : "request_error";
+    try {
+      await repo.recordErrorEvent({
+        organizationId: req.organizationId,
+        actorId: req.user && req.user.id,
+        requestId: req.requestId,
+        errorCode,
+        method: req.method,
+        path: req.path,
+        status,
+        metadata: { message: status === 500 ? "Unhandled server error" : String(error.message || "Request failed").slice(0, 200) }
+      });
+    } catch (recordError) {
+      console.error("error_event_persistence_failed", recordError.message);
+    }
+    if (res.headersSent) return;
+    res.status(status).json({ error: errorCode, requestId: req.requestId });
+  });
   return app;
 }
 

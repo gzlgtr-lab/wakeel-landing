@@ -25,6 +25,18 @@ CREATE TABLE IF NOT EXISTS audit_events (
   metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS error_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id text REFERENCES organizations(id) ON DELETE SET NULL,
+  actor_id uuid REFERENCES users(id) ON DELETE SET NULL,
+  request_id text NOT NULL,
+  error_code text NOT NULL CHECK (char_length(error_code) BETWEEN 1 AND 100),
+  method text NOT NULL,
+  path text NOT NULL,
+  status integer NOT NULL CHECK (status BETWEEN 400 AND 599),
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS agent_configs (
   organization_id text PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
   name text NOT NULL CHECK (char_length(name) BETWEEN 1 AND 100),
@@ -106,6 +118,7 @@ CREATE INDEX IF NOT EXISTS user_sessions_expire_idx ON user_sessions (expire);
 ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memberships ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE error_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_configs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE knowledge_sources ENABLE ROW LEVEL SECURITY;
 ALTER TABLE conversations ENABLE ROW LEVEL SECURITY;
@@ -139,6 +152,10 @@ CREATE POLICY memberships_self_access ON memberships
 DROP POLICY IF EXISTS audit_member_access ON audit_events;
 CREATE POLICY audit_member_access ON audit_events
   USING (app_can_access_organization(audit_events.organization_id));
+
+DROP POLICY IF EXISTS error_event_member_access ON error_events;
+CREATE POLICY error_event_member_access ON error_events
+  USING (organization_id IS NOT NULL AND app_can_access_organization(error_events.organization_id));
 
 DROP POLICY IF EXISTS agent_config_member_access ON agent_configs;
 CREATE POLICY agent_config_member_access ON agent_configs

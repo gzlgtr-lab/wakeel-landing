@@ -110,6 +110,38 @@ test("PostgreSQL migration defines transaction-context RLS policies", () => {
   assert.match(migration, /current_setting\('app\.current_user_id'/);
   assert.match(migration, /CREATE POLICY memberships_self_access/);
   assert.match(migration, /SECURITY DEFINER/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS error_events/);
+  assert.match(migration, /CREATE POLICY error_event_member_access/);
+});
+
+test("health surfaces expose request IDs and adapter readiness", async () => {
+  const { app, repo } = await fixture();
+  const live = await request(app).get("/health/live");
+  assert.equal(live.status, 200);
+  assert.equal(live.body.status, "live");
+  assert.match(live.headers["x-request-id"], /^req_[a-f0-9]+$/);
+  const ready = await request(app).get("/health/ready");
+  assert.equal(ready.status, 200);
+  assert.deepEqual(ready.body, { ok: true, database: "memory", status: "ready" });
+  assert.deepEqual(repo.errorEvents, []);
+});
+
+test("readiness failures return a stable error and persist an event", async () => {
+  const errorEvents = [];
+  const app = createApp({
+    repository: {
+      readiness: async () => { throw new Error("database unavailable"); },
+      recordErrorEvent: async (event) => errorEvents.push(event)
+    }
+  });
+  const response = await request(app).get("/health/ready");
+  assert.equal(response.status, 500);
+  assert.equal(response.body.error, "internal_error");
+  assert.match(response.body.requestId, /^req_[a-f0-9]+$/);
+  assert.equal(errorEvents.length, 1);
+  assert.equal(errorEvents[0].path, "/health/ready");
+  assert.equal(errorEvents[0].status, 500);
+  assert.equal(errorEvents[0].metadata.message, "Unhandled server error");
 });
 
 test("PostgreSQL repository scopes organization queries to a transaction user", async () => {

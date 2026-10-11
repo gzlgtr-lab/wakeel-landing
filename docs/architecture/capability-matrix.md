@@ -12,6 +12,7 @@
 | Conversations/inbox | Yes, create/list/status/assignment lifecycle | Provider-neutral records | Outbound channels, realtime, notifications, SLA automation pending |
 | Conversation analytics | Yes, counts derived from stored records | Query contract | Production dashboards, retention, export, and event pipeline pending |
 | API keys/webhooks | Yes, tenant-scoped hashed API keys with metadata listing/revocation, encrypted webhook secret, HMAC/timestamp/replay checks | Provider-neutral boundary | Key-authenticated API middleware, delivery workers, external provider verification pending |
+| Observability/health | Yes, request IDs, durable error-event contract, liveness/readiness endpoints | Adapter boundary | External metrics, tracing, alerting, and live PostgreSQL verification pending |
 | Conversations, AI/RAG | No | No | Not implemented |
 | Billing, API keys, webhooks | No fake flows | Contracts only | Not implemented |
 | Arabic/English | Existing landing/workspace | N/A | Browser matrix still required |
