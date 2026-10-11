@@ -76,6 +76,10 @@ function validateWebhookEndpoint(input) {
 function validateIdempotencyKey(value) {
   return typeof value === "string" && /^[A-Za-z0-9._:-]{8,128}$/.test(value);
 }
+function redactAuditMetadata(metadata) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return {};
+  return Object.fromEntries(Object.entries(metadata).filter(([key]) => !/(secret|password|token|hash|ciphertext)/i.test(key)));
+}
 const SUBSCRIPTION_STATUSES = new Set(["trialing", "active", "past_due", "canceled", "incomplete"]);
 const BILLING_EVENT_TYPES = new Set(["subscription.updated", "subscription.deleted"]);
 function hashSecret(secret) {
@@ -271,6 +275,14 @@ function createMemoryRepository(seed = []) {
       billingEvents.add(`${organizationId}:${eventId}`);
       audit.push({ action: "billing.subscription_updated", organizationId, eventId, status: record.status, plan: record.plan });
       return { ok: true, subscription: record };
+    },
+    async listAuditEvents(userId, organizationId, limit = 100) {
+      const member = memberships.get(`${userId}:${organizationId}`);
+      if (!member || ROLES[member.role] < ROLES.admin) return null;
+      return audit.filter((event) => event.organizationId === organizationId).slice(-limit).reverse().map((event) => ({
+        ...event,
+        metadata: redactAuditMetadata(event.metadata)
+      }));
     },
     audit,
     errorEvents
@@ -489,6 +501,14 @@ function createPostgresRepository(pool) {
         );
         return { ok: true, subscription: result.rows[0] };
       });
+    },
+    async listAuditEvents(userId, organizationId, limit = 100) {
+      return withUserContext(userId, async (client) => {
+        const roleResult = await client.query("SELECT role FROM memberships WHERE organization_id = $1", [organizationId]);
+        if (!roleResult.rows[0] || ROLES[roleResult.rows[0].role] < ROLES.admin) return null;
+        const result = await client.query("SELECT id, organization_id AS \"organizationId\", actor_id AS \"actorId\", action, metadata, created_at AS \"createdAt\" FROM audit_events WHERE organization_id = $1 ORDER BY created_at DESC LIMIT $2", [organizationId, limit]);
+        return result.rows.map((event) => ({ ...event, metadata: redactAuditMetadata(event.metadata) }));
+      });
     }
   };
 }
@@ -665,6 +685,11 @@ function createApp({ repository, sessionStore, allowDevLogin = false } = {}) {
   });
   app.get("/api/organizations/:organizationId/subscription", requireAuth, requireMembership, async (req, res) => {
     res.json(await repo.subscription(req.user.id, req.organizationId));
+  });
+  app.get("/api/organizations/:organizationId/audit", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
+    const requestedLimit = Number.parseInt(req.query.limit, 10);
+    const limit = Number.isInteger(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 100) : 100;
+    res.json({ events: await repo.listAuditEvents(req.user.id, req.organizationId, limit) });
   });
   app.post("/api/organizations/:organizationId/api-keys", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
     if (!req.body || typeof req.body.name !== "string" || req.body.name.trim().length < 1 || req.body.name.length > 100) return res.status(400).json({ error: "api_key_invalid" });

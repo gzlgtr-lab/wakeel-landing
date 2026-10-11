@@ -15,6 +15,7 @@
 | Observability/health | Yes, request IDs, durable error-event contract, liveness/readiness endpoints | Adapter boundary | External metrics, tracing, alerting, and live PostgreSQL verification pending |
 | Background jobs | Yes, tenant-scoped queued knowledge-ingestion job contract with idempotency | Queue adapter boundary | Worker, fetching, parsing, embedding, retries, and provider execution pending |
 | Billing/subscription state | Yes, tenant-scoped state read model updated only by verified, replay-safe webhook events | Provider-neutral contract | Checkout, payment collection, provider synchronization, tax, and invoicing pending |
+| Security/audit | Yes, tenant-scoped admin audit retrieval with bounded limits and metadata redaction | Existing audit/RLS contract | Retention, export, alerting, and compliance review workflow pending |
 | Conversations, AI/RAG | No | No | Not implemented |
 | Billing, API keys, webhooks | No fake flows | Contracts only | Not implemented |
 | Arabic/English | Existing landing/workspace | N/A | Browser matrix still required |

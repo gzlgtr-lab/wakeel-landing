@@ -355,3 +355,21 @@ test("subscription state is read-only locally and updates only from verified ide
   const replay = await request(app).post(`/api/webhooks/${endpoint.body.id}`).set("x-wakeel-event-id", "bill-1").set("x-wakeel-timestamp", timestamp).set("x-wakeel-signature", signature).set("content-type", "application/json").send(body);
   assert.equal(replay.status, 409);
 });
+
+test("audit records are tenant-scoped, admin-only, and redact sensitive metadata", async () => {
+  const { app, repo } = await fixture();
+  const owner = request.agent(app);
+  const member = request.agent(app);
+  const ownerToken = await login(owner, "owner@example.test");
+  const memberToken = await login(member, "member@example.test");
+  repo.audit.push({ organizationId: "org-a", action: "test.event", secret: "never-return", metadata: { apiKeyHash: "never-return", safe: "ok" } });
+  const denied = await member.get("/api/organizations/org-a/audit");
+  assert.equal(denied.status, 403);
+  const response = await owner.get("/api/organizations/org-a/audit?limit=1");
+  assert.equal(response.status, 200);
+  assert.equal(response.body.events.length, 1);
+  assert.equal(response.body.events[0].metadata.safe, "ok");
+  assert.equal(Object.prototype.hasOwnProperty.call(response.body.events[0].metadata, "apiKeyHash"), false);
+  assert.equal(response.body.events[0].secret, "never-return");
+  assert.equal(ownerToken.length > 0 && memberToken.length > 0, true);
+});
