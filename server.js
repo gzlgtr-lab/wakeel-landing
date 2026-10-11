@@ -76,6 +76,8 @@ function validateWebhookEndpoint(input) {
 function validateIdempotencyKey(value) {
   return typeof value === "string" && /^[A-Za-z0-9._:-]{8,128}$/.test(value);
 }
+const SUBSCRIPTION_STATUSES = new Set(["trialing", "active", "past_due", "canceled", "incomplete"]);
+const BILLING_EVENT_TYPES = new Set(["subscription.updated", "subscription.deleted"]);
 function hashSecret(secret) {
   return crypto.createHash("sha256").update(secret).digest("hex");
 }
@@ -110,6 +112,8 @@ function createMemoryRepository(seed = []) {
   const agentConfigs = new Map();
   const knowledgeSources = new Map();
   const ingestionJobs = new Map();
+  const subscriptions = new Map();
+  const billingEvents = new Set();
   const conversations = new Map();
   const apiKeys = new Map();
   const webhookEndpoints = new Map();
@@ -252,6 +256,21 @@ function createMemoryRepository(seed = []) {
       if (!safeEqual(signature, expected) || Math.abs(Date.now() - Number(timestamp) * 1000) > 5 * 60 * 1000) return { ok: false, reason: "signature_invalid" };
       webhookEvents.add(`${endpointId}:${eventId}`);
       return { ok: true, organizationId: endpoint.organizationId };
+    },
+    async subscription(userId, organizationId) {
+      if (!memberships.has(`${userId}:${organizationId}`)) return null;
+      return subscriptions.get(organizationId) || { organizationId, status: "incomplete", plan: null, provider: null };
+    },
+    async applyBillingEvent(organizationId, eventId, event) {
+      if (billingEvents.has(`${organizationId}:${eventId}`)) return { ok: false, reason: "duplicate" };
+      if (!event || !BILLING_EVENT_TYPES.has(event.type) || !event.subscription || typeof event.subscription !== "object") return { ok: false, reason: "billing_event_invalid" };
+      const subscription = event.subscription;
+      if (typeof subscription.status !== "string" || !SUBSCRIPTION_STATUSES.has(subscription.status) || typeof subscription.plan !== "string" || subscription.plan.length > 100) return { ok: false, reason: "billing_event_invalid" };
+      const record = { organizationId, status: subscription.status, plan: subscription.plan, provider: typeof subscription.provider === "string" ? subscription.provider : null, providerSubscriptionId: typeof subscription.providerSubscriptionId === "string" ? subscription.providerSubscriptionId : null, currentPeriodEnd: subscription.currentPeriodEnd || null, updatedAt: new Date().toISOString() };
+      subscriptions.set(organizationId, record);
+      billingEvents.add(`${organizationId}:${eventId}`);
+      audit.push({ action: "billing.subscription_updated", organizationId, eventId, status: record.status, plan: record.plan });
+      return { ok: true, subscription: record };
     },
     audit,
     errorEvents
@@ -448,6 +467,28 @@ function createPostgresRepository(pool) {
       if (!safeEqual(signature, expected)) return { ok: false, reason: "signature_invalid" };
       const replay = await pool.query("SELECT app_record_webhook_event($1, $2) AS accepted", [endpointId, eventId]);
       return replay.rows[0].accepted ? { ok: true, organizationId: endpoint.organization_id } : { ok: false, reason: "replay_or_unknown" };
+    },
+    async subscription(userId, organizationId) {
+      return withUserContext(userId, async (client) => {
+        const result = await client.query("SELECT organization_id AS \"organizationId\", plan, status, provider, provider_subscription_id AS \"providerSubscriptionId\", current_period_end AS \"currentPeriodEnd\", updated_at AS \"updatedAt\" FROM subscriptions WHERE organization_id = $1", [organizationId]);
+        return result.rows[0] || { organizationId, status: "incomplete", plan: null, provider: null };
+      });
+    },
+    async applyBillingEvent(organizationId, eventId, event) {
+      if (!event || !BILLING_EVENT_TYPES.has(event.type) || !event.subscription || typeof event.subscription !== "object") return { ok: false, reason: "billing_event_invalid" };
+      const subscription = event.subscription;
+      if (typeof subscription.status !== "string" || !SUBSCRIPTION_STATUSES.has(subscription.status) || typeof subscription.plan !== "string" || subscription.plan.length > 100) return { ok: false, reason: "billing_event_invalid" };
+      return pool.query(
+        "INSERT INTO billing_events (organization_id, event_id, event_type, payload) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (organization_id, event_id) DO NOTHING RETURNING event_id",
+        [organizationId, eventId, event.type, JSON.stringify(event)]
+      ).then(async (eventResult) => {
+        if (!eventResult.rowCount) return { ok: false, reason: "duplicate" };
+        const result = await pool.query(
+          "INSERT INTO subscriptions (organization_id, plan, status, provider, provider_subscription_id, current_period_end) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (organization_id) DO UPDATE SET plan = EXCLUDED.plan, status = EXCLUDED.status, provider = EXCLUDED.provider, provider_subscription_id = EXCLUDED.provider_subscription_id, current_period_end = EXCLUDED.current_period_end, updated_at = now() RETURNING organization_id AS \"organizationId\", plan, status, provider, provider_subscription_id AS \"providerSubscriptionId\", current_period_end AS \"currentPeriodEnd\", updated_at AS \"updatedAt\"",
+          [organizationId, subscription.plan, subscription.status, subscription.provider || null, subscription.providerSubscriptionId || null, subscription.currentPeriodEnd || null]
+        );
+        return { ok: true, subscription: result.rows[0] };
+      });
     }
   };
 }
@@ -544,8 +585,16 @@ function createApp({ repository, sessionStore, allowDevLogin = false } = {}) {
   });
   app.post("/api/webhooks/:endpointId", express.raw({ type: "application/json", limit: "100kb" }), async (req, res) => {
     const body = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : JSON.stringify(req.body || {});
-    const result = await repo.verifyWebhook(req.params.endpointId, req.get("x-wakeel-event-id"), req.get("x-wakeel-signature"), req.get("x-wakeel-timestamp"), body);
-    return result.ok ? res.status(202).json({ accepted: true }) : res.status(result.reason === "replay_or_unknown" ? 409 : 401).json({ error: result.reason });
+    const eventId = req.get("x-wakeel-event-id");
+    const result = await repo.verifyWebhook(req.params.endpointId, eventId, req.get("x-wakeel-signature"), req.get("x-wakeel-timestamp"), body);
+    if (!result.ok) return res.status(result.reason === "replay_or_unknown" ? 409 : 401).json({ error: result.reason });
+    let event;
+    try { event = JSON.parse(body); } catch (_error) { return res.status(400).json({ error: "webhook_payload_invalid" }); }
+    if (event.type && event.type.startsWith("subscription.")) {
+      const billing = await repo.applyBillingEvent(result.organizationId, eventId, event);
+      if (!billing.ok) return res.status(billing.reason === "duplicate" ? 409 : 400).json({ error: billing.reason });
+    }
+    return res.status(202).json({ accepted: true });
   });
   app.get("/api/auth/csrf", (req, res, next) => {
     req.session.save((error) => {
@@ -613,6 +662,9 @@ function createApp({ repository, sessionStore, allowDevLogin = false } = {}) {
   });
   app.get("/api/organizations/:organizationId/analytics/conversations", requireAuth, requireMembership, async (req, res) => {
     res.json(await repo.conversationAnalytics(req.user.id, req.organizationId));
+  });
+  app.get("/api/organizations/:organizationId/subscription", requireAuth, requireMembership, async (req, res) => {
+    res.json(await repo.subscription(req.user.id, req.organizationId));
   });
   app.post("/api/organizations/:organizationId/api-keys", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
     if (!req.body || typeof req.body.name !== "string" || req.body.name.trim().length < 1 || req.body.name.length > 100) return res.status(400).json({ error: "api_key_invalid" });

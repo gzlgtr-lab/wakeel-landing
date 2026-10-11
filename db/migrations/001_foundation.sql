@@ -69,6 +69,23 @@ CREATE TABLE IF NOT EXISTS background_jobs (
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (organization_id, idempotency_key)
 );
+CREATE TABLE IF NOT EXISTS subscriptions (
+  organization_id text PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+  plan text,
+  status text NOT NULL CHECK (status IN ('trialing', 'active', 'past_due', 'canceled', 'incomplete')),
+  provider text,
+  provider_subscription_id text,
+  current_period_end timestamptz,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS billing_events (
+  organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  event_id text NOT NULL,
+  event_type text NOT NULL,
+  payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+  received_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (organization_id, event_id)
+);
 CREATE TABLE IF NOT EXISTS conversations (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -133,6 +150,8 @@ ALTER TABLE error_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_configs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE knowledge_sources ENABLE ROW LEVEL SECURITY;
 ALTER TABLE background_jobs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE billing_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE conversations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE webhook_endpoints ENABLE ROW LEVEL SECURITY;
@@ -183,6 +202,16 @@ DROP POLICY IF EXISTS background_job_member_access ON background_jobs;
 CREATE POLICY background_job_member_access ON background_jobs
   USING (app_can_access_organization(background_jobs.organization_id))
   WITH CHECK (app_can_access_organization(background_jobs.organization_id));
+
+DROP POLICY IF EXISTS subscription_member_access ON subscriptions;
+CREATE POLICY subscription_member_access ON subscriptions
+  USING (app_can_access_organization(subscriptions.organization_id))
+  WITH CHECK (app_can_access_organization(subscriptions.organization_id));
+
+DROP POLICY IF EXISTS billing_event_member_access ON billing_events;
+CREATE POLICY billing_event_member_access ON billing_events
+  USING (app_can_access_organization(billing_events.organization_id))
+  WITH CHECK (app_can_access_organization(billing_events.organization_id));
 
 DROP POLICY IF EXISTS conversation_member_access ON conversations;
 CREATE POLICY conversation_member_access ON conversations

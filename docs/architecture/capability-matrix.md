@@ -14,6 +14,7 @@
 | API keys/webhooks | Yes, tenant-scoped hashed API keys with metadata listing/revocation, encrypted webhook secret, HMAC/timestamp/replay checks | Provider-neutral boundary | Key-authenticated API middleware, delivery workers, external provider verification pending |
 | Observability/health | Yes, request IDs, durable error-event contract, liveness/readiness endpoints | Adapter boundary | External metrics, tracing, alerting, and live PostgreSQL verification pending |
 | Background jobs | Yes, tenant-scoped queued knowledge-ingestion job contract with idempotency | Queue adapter boundary | Worker, fetching, parsing, embedding, retries, and provider execution pending |
+| Billing/subscription state | Yes, tenant-scoped state read model updated only by verified, replay-safe webhook events | Provider-neutral contract | Checkout, payment collection, provider synchronization, tax, and invoicing pending |
 | Conversations, AI/RAG | No | No | Not implemented |
 | Billing, API keys, webhooks | No fake flows | Contracts only | Not implemented |
 | Arabic/English | Existing landing/workspace | N/A | Browser matrix still required |

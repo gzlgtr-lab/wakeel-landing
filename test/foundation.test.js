@@ -335,3 +335,23 @@ test("API key metadata is tenant-scoped and admin revocation is audited", async 
   const after = await owner.get("/api/organizations/org-a/api-keys");
   assert.equal(after.body.keys[0].revokedAt !== null, true);
 });
+
+test("subscription state is read-only locally and updates only from verified idempotent events", async () => {
+  const { app } = await fixture();
+  const owner = request.agent(app);
+  const token = await login(owner, "owner@example.test");
+  const initial = await owner.get("/api/organizations/org-a/subscription");
+  assert.equal(initial.status, 200);
+  assert.equal(initial.body.status, "incomplete");
+  const endpoint = await owner.post("/api/organizations/org-a/webhooks").set("x-csrf-token", token).send({ name: "Billing", url: "https://example.test/billing" });
+  const body = JSON.stringify({ type: "subscription.updated", subscription: { plan: "starter", status: "active", provider: "external", providerSubscriptionId: "sub_123" } });
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const signature = require("node:crypto").createHmac("sha256", endpoint.body.secret).update(`${timestamp}.${body}`).digest("hex");
+  const update = await request(app).post(`/api/webhooks/${endpoint.body.id}`).set("x-wakeel-event-id", "bill-1").set("x-wakeel-timestamp", timestamp).set("x-wakeel-signature", signature).set("content-type", "application/json").send(body);
+  assert.equal(update.status, 202);
+  const subscription = await owner.get("/api/organizations/org-a/subscription");
+  assert.equal(subscription.body.status, "active");
+  assert.equal(subscription.body.plan, "starter");
+  const replay = await request(app).post(`/api/webhooks/${endpoint.body.id}`).set("x-wakeel-event-id", "bill-1").set("x-wakeel-timestamp", timestamp).set("x-wakeel-signature", signature).set("content-type", "application/json").send(body);
+  assert.equal(replay.status, 409);
+});
