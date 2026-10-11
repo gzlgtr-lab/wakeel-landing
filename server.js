@@ -68,6 +68,32 @@ function validateConversationUpdate(input) {
     && CONVERSATION_STATUSES.has(input.status)
     && (input.assigneeId === null || typeof input.assigneeId === "string");
 }
+function validateWebhookEndpoint(input) {
+  return input && typeof input === "object" && !Array.isArray(input)
+    && typeof input.name === "string" && input.name.trim().length > 0 && input.name.length <= 100
+    && typeof input.url === "string" && /^https:\/\//i.test(input.url) && input.url.length <= 2048;
+}
+function hashSecret(secret) {
+  return crypto.createHash("sha256").update(secret).digest("hex");
+}
+function hmacSignature(secret, timestamp, body) {
+  return crypto.createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("hex");
+}
+function encryptionKey() {
+  return crypto.createHash("sha256").update(env("WAKEEL_WEBHOOK_ENCRYPTION_KEY", env("WAKEEL_SESSION_SECRET", "development-only-change-me"))).digest();
+}
+function encryptSecret(secret) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", encryptionKey(), iv);
+  const ciphertext = Buffer.concat([cipher.update(secret, "utf8"), cipher.final()]);
+  return `${iv.toString("base64url")}.${cipher.getAuthTag().toString("base64url")}.${ciphertext.toString("base64url")}`;
+}
+function decryptSecret(payload) {
+  const [iv, tag, ciphertext] = String(payload).split(".").map((value) => Buffer.from(value, "base64url"));
+  const decipher = crypto.createDecipheriv("aes-256-gcm", encryptionKey(), iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+}
 
 function createMemoryRepository(seed = []) {
   const users = new Map();
@@ -77,6 +103,9 @@ function createMemoryRepository(seed = []) {
   const agentConfigs = new Map();
   const knowledgeSources = new Map();
   const conversations = new Map();
+  const apiKeys = new Map();
+  const webhookEndpoints = new Map();
+  const webhookEvents = new Set();
   for (const record of seed) {
     const user = { id: record.userId || crypto.randomUUID(), email: record.email.toLowerCase(), passwordHash: record.passwordHash };
     users.set(user.email, user);
@@ -158,6 +187,32 @@ function createMemoryRepository(seed = []) {
         byStatus: Object.fromEntries([...CONVERSATION_STATUSES].map((status) => [status, rows.filter((item) => item.status === status).length])),
         byChannel: Object.fromEntries(["web", "email", "whatsapp", "manual"].map((channel) => [channel, rows.filter((item) => item.channel === channel).length]))
       };
+    },
+    async createApiKey(actor, organizationId, input) {
+      const member = memberships.get(`${actor.id}:${organizationId}`);
+      if (!member || ROLES[member.role] < ROLES.admin) return { ok: false, reason: "forbidden" };
+      const secret = `wk_live_${crypto.randomBytes(24).toString("base64url")}`;
+      const record = { id: crypto.randomUUID(), organizationId, name: input.name, keyHash: hashSecret(secret), createdBy: actor.id, createdAt: new Date().toISOString() };
+      apiKeys.set(record.id, record);
+      audit.push({ action: "api_key.created", organizationId, actorId: actor.id, apiKeyId: record.id });
+      return { ok: true, key: { id: record.id, name: record.name, secret } };
+    },
+    async createWebhookEndpoint(actor, organizationId, input) {
+      const member = memberships.get(`${actor.id}:${organizationId}`);
+      if (!member || ROLES[member.role] < ROLES.admin) return { ok: false, reason: "forbidden" };
+      const secret = `whsec_${crypto.randomBytes(24).toString("base64url")}`;
+      const record = { id: crypto.randomUUID(), organizationId, name: input.name, url: input.url, secretHash: hashSecret(secret), secret, enabled: true };
+      webhookEndpoints.set(record.id, record);
+      audit.push({ action: "webhook.created", organizationId, actorId: actor.id, endpointId: record.id });
+      return { ok: true, endpoint: { id: record.id, name: record.name, url: record.url, secret } };
+    },
+    async verifyWebhook(endpointId, eventId, signature, timestamp, body) {
+      const endpoint = webhookEndpoints.get(endpointId);
+      if (!endpoint || !endpoint.enabled || !eventId || !signature || !timestamp || webhookEvents.has(`${endpointId}:${eventId}`)) return { ok: false, reason: "replay_or_unknown" };
+      const expected = hmacSignature(endpoint.secret, timestamp, body);
+      if (!safeEqual(signature, expected) || Math.abs(Date.now() - Number(timestamp) * 1000) > 5 * 60 * 1000) return { ok: false, reason: "signature_invalid" };
+      webhookEvents.add(`${endpointId}:${eventId}`);
+      return { ok: true, organizationId: endpoint.organizationId };
     },
     audit
   };
@@ -292,6 +347,36 @@ function createPostgresRepository(pool) {
         }
         return analytics;
       });
+    },
+    async createApiKey(actor, organizationId, input) {
+      return withUserContext(actor.id, async (client) => {
+        const roleResult = await client.query("SELECT role FROM memberships WHERE organization_id = $1", [organizationId]);
+        if (!roleResult.rows[0] || ROLES[roleResult.rows[0].role] < ROLES.admin) return { ok: false, reason: "forbidden" };
+        const secret = `wk_live_${crypto.randomBytes(24).toString("base64url")}`;
+        const result = await client.query("INSERT INTO api_keys (organization_id, name, key_hash, created_by) VALUES ($1, $2, $3, $4) RETURNING id, name", [organizationId, input.name, hashSecret(secret), actor.id]);
+        await client.query("INSERT INTO audit_events (organization_id, actor_id, action, metadata) VALUES ($1, $2, $3, $4)", [organizationId, actor.id, "api_key.created", JSON.stringify({ apiKeyId: result.rows[0].id })]);
+        return { ok: true, key: { ...result.rows[0], secret } };
+      });
+    },
+    async createWebhookEndpoint(actor, organizationId, input) {
+      return withUserContext(actor.id, async (client) => {
+        const roleResult = await client.query("SELECT role FROM memberships WHERE organization_id = $1", [organizationId]);
+        if (!roleResult.rows[0] || ROLES[roleResult.rows[0].role] < ROLES.admin) return { ok: false, reason: "forbidden" };
+        const secret = `whsec_${crypto.randomBytes(24).toString("base64url")}`;
+        const result = await client.query("INSERT INTO webhook_endpoints (organization_id, name, url, secret_hash, secret_ciphertext, created_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, name, url", [organizationId, input.name, input.url, hashSecret(secret), encryptSecret(secret), actor.id]);
+        await client.query("INSERT INTO audit_events (organization_id, actor_id, action, metadata) VALUES ($1, $2, $3, $4)", [organizationId, actor.id, "webhook.created", JSON.stringify({ endpointId: result.rows[0].id })]);
+        return { ok: true, endpoint: { ...result.rows[0], secret } };
+      });
+    },
+    async verifyWebhook(endpointId, eventId, signature, timestamp, body) {
+      const result = await pool.query("SELECT id, organization_id, secret_ciphertext, enabled FROM webhook_endpoints WHERE id = $1", [endpointId]);
+      const endpoint = result.rows[0];
+      if (!endpoint || !endpoint.enabled || !eventId || !signature || !timestamp) return { ok: false, reason: "replay_or_unknown" };
+      if (Math.abs(Date.now() - Number(timestamp) * 1000) > 5 * 60 * 1000) return { ok: false, reason: "signature_invalid" };
+      const expected = hmacSignature(decryptSecret(endpoint.secret_ciphertext), timestamp, body);
+      if (!safeEqual(signature, expected)) return { ok: false, reason: "signature_invalid" };
+      const replay = await pool.query("SELECT app_record_webhook_event($1, $2) AS accepted", [endpointId, eventId]);
+      return replay.rows[0].accepted ? { ok: true, organizationId: endpoint.organization_id } : { ok: false, reason: "replay_or_unknown" };
     }
   };
 }
@@ -369,9 +454,14 @@ function createApp({ repository, sessionStore, allowDevLogin = false } = {}) {
     if (!req.membership || ROLES[req.membership.role] < ROLES[minimum]) return res.status(403).json({ error: "role_not_allowed" });
     next();
   };
-  app.use("/api", requireCsrf);
+  app.use("/api", (req, res, next) => req.path.startsWith("/webhooks/") ? next() : requireCsrf(req, res, next));
 
   app.get("/health", (_req, res) => res.json({ ok: true }));
+  app.post("/api/webhooks/:endpointId", express.raw({ type: "application/json", limit: "100kb" }), async (req, res) => {
+    const body = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : JSON.stringify(req.body || {});
+    const result = await repo.verifyWebhook(req.params.endpointId, req.get("x-wakeel-event-id"), req.get("x-wakeel-signature"), req.get("x-wakeel-timestamp"), body);
+    return result.ok ? res.status(202).json({ accepted: true }) : res.status(result.reason === "replay_or_unknown" ? 409 : 401).json({ error: result.reason });
+  });
   app.get("/api/auth/csrf", (req, res, next) => {
     req.session.save((error) => {
       if (error) return next(error);
@@ -436,6 +526,16 @@ function createApp({ repository, sessionStore, allowDevLogin = false } = {}) {
   });
   app.get("/api/organizations/:organizationId/analytics/conversations", requireAuth, requireMembership, async (req, res) => {
     res.json(await repo.conversationAnalytics(req.user.id, req.organizationId));
+  });
+  app.post("/api/organizations/:organizationId/api-keys", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
+    if (!req.body || typeof req.body.name !== "string" || req.body.name.trim().length < 1 || req.body.name.length > 100) return res.status(400).json({ error: "api_key_invalid" });
+    const result = await repo.createApiKey(req.user, req.organizationId, req.body);
+    return result.ok ? res.status(201).json(result.key) : res.status(403).json({ error: result.reason });
+  });
+  app.post("/api/organizations/:organizationId/webhooks", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
+    if (!validateWebhookEndpoint(req.body)) return res.status(400).json({ error: "webhook_invalid" });
+    const result = await repo.createWebhookEndpoint(req.user, req.organizationId, req.body);
+    return result.ok ? res.status(201).json(result.endpoint) : res.status(403).json({ error: result.reason });
   });
   app.patch("/api/organizations/:organizationId/members/:targetUserId", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
     if (!validateRole(req.body.role)) return res.status(400).json({ error: "role_invalid" });

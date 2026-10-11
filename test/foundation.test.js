@@ -244,3 +244,22 @@ test("conversation analytics are derived from tenant records", async () => {
   const crossTenant = await owner.get("/api/organizations/org-b/analytics/conversations");
   assert.equal(crossTenant.status, 403);
 });
+
+test("API keys are returned once and webhook signatures reject replay", async () => {
+  const { app } = await fixture();
+  const owner = request.agent(app);
+  const token = await login(owner, "owner@example.test");
+  const key = await owner.post("/api/organizations/org-a/api-keys").set("x-csrf-token", token).send({ name: "Local integration" });
+  assert.equal(key.status, 201);
+  assert.match(key.body.secret, /^wk_live_/);
+  const endpoint = await owner.post("/api/organizations/org-a/webhooks").set("x-csrf-token", token).send({ name: "Inbound", url: "https://example.test/hooks" });
+  assert.equal(endpoint.status, 201);
+  assert.match(endpoint.body.secret, /^whsec_/);
+  const body = JSON.stringify({ type: "conversation.created" });
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const signature = require("node:crypto").createHmac("sha256", endpoint.body.secret).update(`${timestamp}.${body}`).digest("hex");
+  const accepted = await request(app).post(`/api/webhooks/${endpoint.body.id}`).set("x-wakeel-event-id", "evt-1").set("x-wakeel-timestamp", timestamp).set("x-wakeel-signature", signature).set("content-type", "application/json").send(body);
+  assert.equal(accepted.status, 202);
+  const replay = await request(app).post(`/api/webhooks/${endpoint.body.id}`).set("x-wakeel-event-id", "evt-1").set("x-wakeel-timestamp", timestamp).set("x-wakeel-signature", signature).set("content-type", "application/json").send(body);
+  assert.equal(replay.status, 409);
+});

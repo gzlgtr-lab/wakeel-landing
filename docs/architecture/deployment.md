@@ -3,7 +3,7 @@
 ## Local
 
 1. Install Node.js 20+ and PostgreSQL.
-2. Copy `.env.example` to an ignored environment file and set `WAKEEL_DATABASE_URL` and `WAKEEL_SESSION_SECRET`.
+2. Copy `.env.example` to an ignored environment file and set `WAKEEL_DATABASE_URL`, `WAKEEL_SESSION_SECRET`, and a separate high-entropy `WAKEEL_WEBHOOK_ENCRYPTION_KEY`. The latter encrypts webhook secrets at rest and must be retained for verification; do not use the development fallback in production.
 3. Run `npm install`, `npm run db:migrate`, and `npm run db:seed`.
 4. Start with `npm run dev`; the landing page remains at `/` and API health is `/health`.
 

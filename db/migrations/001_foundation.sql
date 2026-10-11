@@ -57,6 +57,45 @@ CREATE TABLE IF NOT EXISTS conversations (
   created_by uuid NOT NULL REFERENCES users(id),
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS api_keys (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  name text NOT NULL CHECK (char_length(name) BETWEEN 1 AND 100),
+  key_hash text NOT NULL UNIQUE,
+  created_by uuid NOT NULL REFERENCES users(id),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  revoked_at timestamptz
+);
+CREATE TABLE IF NOT EXISTS webhook_endpoints (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  name text NOT NULL CHECK (char_length(name) BETWEEN 1 AND 100),
+  url text NOT NULL CHECK (url LIKE 'https://%'),
+  secret_hash text NOT NULL,
+  secret_ciphertext text NOT NULL,
+  enabled boolean NOT NULL DEFAULT true,
+  created_by uuid NOT NULL REFERENCES users(id),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE webhook_endpoints ADD COLUMN IF NOT EXISTS secret_ciphertext text;
+CREATE TABLE IF NOT EXISTS webhook_events (
+  endpoint_id uuid NOT NULL REFERENCES webhook_endpoints(id) ON DELETE CASCADE,
+  event_id text NOT NULL,
+  received_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (endpoint_id, event_id)
+);
+CREATE OR REPLACE FUNCTION app_record_webhook_event(candidate_endpoint_id uuid, candidate_event_id text)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO webhook_events (endpoint_id, event_id) VALUES (candidate_endpoint_id, candidate_event_id)
+  ON CONFLICT DO NOTHING;
+  RETURN FOUND;
+END;
+$$;
 CREATE TABLE IF NOT EXISTS user_sessions (
   sid varchar NOT NULL PRIMARY KEY,
   sess json NOT NULL,
@@ -70,6 +109,9 @@ ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_configs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE knowledge_sources ENABLE ROW LEVEL SECURITY;
 ALTER TABLE conversations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
+ALTER TABLE webhook_endpoints ENABLE ROW LEVEL SECURITY;
+ALTER TABLE webhook_events ENABLE ROW LEVEL SECURITY;
 
 CREATE OR REPLACE FUNCTION app_can_access_organization(candidate_organization_id text)
 RETURNS boolean
@@ -112,3 +154,26 @@ DROP POLICY IF EXISTS conversation_member_access ON conversations;
 CREATE POLICY conversation_member_access ON conversations
   USING (app_can_access_organization(conversations.organization_id))
   WITH CHECK (app_can_access_organization(conversations.organization_id));
+
+DROP POLICY IF EXISTS api_key_member_access ON api_keys;
+CREATE POLICY api_key_member_access ON api_keys
+  USING (app_can_access_organization(api_keys.organization_id))
+  WITH CHECK (app_can_access_organization(api_keys.organization_id));
+
+DROP POLICY IF EXISTS webhook_member_access ON webhook_endpoints;
+CREATE POLICY webhook_member_access ON webhook_endpoints
+  USING (app_can_access_organization(webhook_endpoints.organization_id))
+  WITH CHECK (app_can_access_organization(webhook_endpoints.organization_id));
+
+DROP POLICY IF EXISTS webhook_event_member_access ON webhook_events;
+CREATE POLICY webhook_event_member_access ON webhook_events
+  USING (EXISTS (
+    SELECT 1 FROM webhook_endpoints w
+    WHERE w.id = webhook_events.endpoint_id
+      AND app_can_access_organization(w.organization_id)
+  ))
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM webhook_endpoints w
+    WHERE w.id = webhook_events.endpoint_id
+      AND app_can_access_organization(w.organization_id)
+  ));

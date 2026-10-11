@@ -10,6 +10,7 @@
 - PostgreSQL repository organization queries run inside transactions that set `app.current_user_id` with transaction-local `set_config`; migration policies deny rows without that context.
 - Knowledge content is bounded and is never treated as trusted instructions: simple prompt-injection indicators quarantine a source before any future indexing step.
 - Conversation content is bounded plain text and is returned only from the create response; list and lifecycle responses expose metadata without customer message bodies.
+- API key secrets are returned only at creation and stored hashed. Webhook secrets are returned only at registration, encrypted at rest for future HMAC verification, and protected by timestamp tolerance plus persistent event-id replay checks.
 - Production startup fails without a database URL or a session secret of at least 32 characters.
 - Organization routes require an authenticated user and a membership in the path organization.
 - Role mutation requires `admin` or `owner` privilege and writes an audit event through the repository adapter.
