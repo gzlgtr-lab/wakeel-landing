@@ -46,6 +46,17 @@ CREATE TABLE IF NOT EXISTS knowledge_sources (
   created_by uuid NOT NULL REFERENCES users(id),
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS conversations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  subject text NOT NULL CHECK (char_length(subject) BETWEEN 1 AND 200),
+  customer_message text NOT NULL CHECK (char_length(customer_message) BETWEEN 1 AND 20000),
+  channel text NOT NULL CHECK (channel IN ('web', 'email', 'whatsapp', 'manual')),
+  status text NOT NULL CHECK (status IN ('open', 'pending', 'escalated', 'resolved')),
+  assignee_id uuid REFERENCES users(id),
+  created_by uuid NOT NULL REFERENCES users(id),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS user_sessions (
   sid varchar NOT NULL PRIMARY KEY,
   sess json NOT NULL,
@@ -58,6 +69,7 @@ ALTER TABLE memberships ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_configs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE knowledge_sources ENABLE ROW LEVEL SECURITY;
+ALTER TABLE conversations ENABLE ROW LEVEL SECURITY;
 
 CREATE OR REPLACE FUNCTION app_can_access_organization(candidate_organization_id text)
 RETURNS boolean
@@ -95,3 +107,8 @@ DROP POLICY IF EXISTS knowledge_source_member_access ON knowledge_sources;
 CREATE POLICY knowledge_source_member_access ON knowledge_sources
   USING (app_can_access_organization(knowledge_sources.organization_id))
   WITH CHECK (app_can_access_organization(knowledge_sources.organization_id));
+
+DROP POLICY IF EXISTS conversation_member_access ON conversations;
+CREATE POLICY conversation_member_access ON conversations
+  USING (app_can_access_organization(conversations.organization_id))
+  WITH CHECK (app_can_access_organization(conversations.organization_id));

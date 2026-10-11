@@ -56,6 +56,18 @@ function validateKnowledgeSource(input) {
     && typeof input.content === "string" && input.content.length <= 200000
     && (input.locator === undefined || (typeof input.locator === "string" && input.locator.length <= 2048));
 }
+const CONVERSATION_STATUSES = new Set(["open", "pending", "escalated", "resolved"]);
+function validateConversationCreate(input) {
+  return input && typeof input === "object" && !Array.isArray(input)
+    && typeof input.subject === "string" && input.subject.trim().length > 0 && input.subject.length <= 200
+    && typeof input.customerMessage === "string" && input.customerMessage.length > 0 && input.customerMessage.length <= 20000
+    && (input.channel === undefined || ["web", "email", "whatsapp", "manual"].includes(input.channel));
+}
+function validateConversationUpdate(input) {
+  return input && typeof input === "object" && !Array.isArray(input)
+    && CONVERSATION_STATUSES.has(input.status)
+    && (input.assigneeId === null || typeof input.assigneeId === "string");
+}
 
 function createMemoryRepository(seed = []) {
   const users = new Map();
@@ -64,6 +76,7 @@ function createMemoryRepository(seed = []) {
   const audit = [];
   const agentConfigs = new Map();
   const knowledgeSources = new Map();
+  const conversations = new Map();
   for (const record of seed) {
     const user = { id: record.userId || crypto.randomUUID(), email: record.email.toLowerCase(), passwordHash: record.passwordHash };
     users.set(user.email, user);
@@ -114,6 +127,27 @@ function createMemoryRepository(seed = []) {
       knowledgeSources.set(id, source);
       audit.push({ action: "knowledge.source_created", organizationId, actorId: actor.id, sourceId: id, status: source.status });
       return { ok: true, source };
+    },
+    async listConversations(userId, organizationId) {
+      if (!memberships.has(`${userId}:${organizationId}`)) return null;
+      return [...conversations.values()].filter((item) => item.organizationId === organizationId).map(({ customerMessage, ...summary }) => summary);
+    },
+    async createConversation(actor, organizationId, input) {
+      if (!memberships.has(`${actor.id}:${organizationId}`)) return { ok: false, reason: "forbidden" };
+      const conversation = { id: crypto.randomUUID(), organizationId, subject: input.subject, customerMessage: input.customerMessage, channel: input.channel || "manual", status: "open", assigneeId: null, createdBy: actor.id, createdAt: new Date().toISOString() };
+      conversations.set(conversation.id, conversation);
+      audit.push({ action: "conversation.created", organizationId, actorId: actor.id, conversationId: conversation.id });
+      return { ok: true, conversation };
+    },
+    async updateConversation(actor, organizationId, conversationId, input) {
+      const member = memberships.get(`${actor.id}:${organizationId}`);
+      const conversation = conversations.get(conversationId);
+      if (!member || !conversation || conversation.organizationId !== organizationId) return { ok: false, reason: "not_found" };
+      if (ROLES[member.role] < ROLES.admin && conversation.assigneeId !== actor.id) return { ok: false, reason: "forbidden" };
+      if (input.assigneeId !== null && !memberships.has(`${input.assigneeId}:${organizationId}`)) return { ok: false, reason: "assignee_not_member" };
+      Object.assign(conversation, { status: input.status, assigneeId: input.assigneeId });
+      audit.push({ action: "conversation.updated", organizationId, actorId: actor.id, conversationId, status: input.status, assigneeId: input.assigneeId });
+      return { ok: true, conversation: { ...conversation, customerMessage: undefined } };
     },
     audit
   };
@@ -212,6 +246,29 @@ function createPostgresRepository(pool) {
         );
         await client.query("INSERT INTO audit_events (organization_id, actor_id, action, metadata) VALUES ($1, $2, $3, $4)", [organizationId, actor.id, "knowledge.source_created", JSON.stringify({ sourceId: result.rows[0].id, status })]);
         return { ok: true, source: result.rows[0] };
+      });
+    },
+    async listConversations(userId, organizationId) {
+      return withUserContext(userId, async (client) => {
+        const result = await client.query("SELECT id, organization_id AS \"organizationId\", subject, channel, status, assignee_id AS \"assigneeId\", created_by AS \"createdBy\", created_at AS \"createdAt\" FROM conversations WHERE organization_id = $1 ORDER BY created_at DESC", [organizationId]);
+        return result.rows;
+      });
+    },
+    async createConversation(actor, organizationId, input) {
+      return withUserContext(actor.id, async (client) => {
+        const memberResult = await client.query("SELECT role FROM memberships WHERE organization_id = $1", [organizationId]);
+        if (!memberResult.rows[0]) return { ok: false, reason: "forbidden" };
+        const result = await client.query("INSERT INTO conversations (organization_id, subject, customer_message, channel, status, created_by) VALUES ($1, $2, $3, $4, 'open', $5) RETURNING id, organization_id AS \"organizationId\", subject, customer_message AS \"customerMessage\", channel, status, assignee_id AS \"assigneeId\", created_by AS \"createdBy\", created_at AS \"createdAt\"", [organizationId, input.subject, input.customerMessage, input.channel || "manual", actor.id]);
+        await client.query("INSERT INTO audit_events (organization_id, actor_id, action, metadata) VALUES ($1, $2, $3, $4)", [organizationId, actor.id, "conversation.created", JSON.stringify({ conversationId: result.rows[0].id })]);
+        return { ok: true, conversation: result.rows[0] };
+      });
+    },
+    async updateConversation(actor, organizationId, conversationId, input) {
+      return withUserContext(actor.id, async (client) => {
+        const result = await client.query("UPDATE conversations SET status = $1, assignee_id = $2 WHERE id = $3 AND organization_id = $4 AND ($5::int >= 30 OR assignee_id = $6) RETURNING id, organization_id AS \"organizationId\", subject, channel, status, assignee_id AS \"assigneeId\", created_by AS \"createdBy\", created_at AS \"createdAt\"", [input.status, input.assigneeId, conversationId, organizationId, ROLES[(await client.query("SELECT role FROM memberships WHERE organization_id = $1", [organizationId])).rows[0]?.role] || 0, actor.id]);
+        if (!result.rowCount) return { ok: false, reason: "forbidden" };
+        await client.query("INSERT INTO audit_events (organization_id, actor_id, action, metadata) VALUES ($1, $2, $3, $4)", [organizationId, actor.id, "conversation.updated", JSON.stringify({ conversationId, status: input.status, assigneeId: input.assigneeId })]);
+        return { ok: true, conversation: result.rows[0] };
       });
     }
   };
@@ -341,6 +398,19 @@ function createApp({ repository, sessionStore, allowDevLogin = false } = {}) {
     if (!validateKnowledgeSource(req.body)) return res.status(400).json({ error: "knowledge_source_invalid" });
     const result = await repo.createKnowledgeSource(req.user, req.organizationId, req.body);
     return result.ok ? res.status(201).json(result.source) : res.status(403).json({ error: result.reason });
+  });
+  app.get("/api/organizations/:organizationId/conversations", requireAuth, requireMembership, async (req, res) => {
+    res.json({ conversations: await repo.listConversations(req.user.id, req.organizationId) });
+  });
+  app.post("/api/organizations/:organizationId/conversations", requireAuth, requireMembership, async (req, res) => {
+    if (!validateConversationCreate(req.body)) return res.status(400).json({ error: "conversation_invalid" });
+    const result = await repo.createConversation(req.user, req.organizationId, req.body);
+    return result.ok ? res.status(201).json(result.conversation) : res.status(403).json({ error: result.reason });
+  });
+  app.patch("/api/organizations/:organizationId/conversations/:conversationId", requireAuth, requireMembership, async (req, res) => {
+    if (!validateConversationUpdate(req.body)) return res.status(400).json({ error: "conversation_update_invalid" });
+    const result = await repo.updateConversation(req.user, req.organizationId, req.params.conversationId, req.body);
+    return result.ok ? res.json(result.conversation) : res.status(result.reason === "forbidden" ? 403 : 404).json({ error: result.reason });
   });
   app.patch("/api/organizations/:organizationId/members/:targetUserId", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
     if (!validateRole(req.body.role)) return res.status(400).json({ error: "role_invalid" });

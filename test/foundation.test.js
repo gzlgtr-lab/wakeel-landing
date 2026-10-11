@@ -197,3 +197,29 @@ test("knowledge sources are tenant-scoped and quarantine prompt injection", asyn
   const crossTenant = await owner.get("/api/organizations/org-b/knowledge");
   assert.equal(crossTenant.status, 403);
 });
+
+test("conversations support tenant-scoped create and assignment lifecycle", async () => {
+  const { app, repo } = await fixture();
+  const owner = request.agent(app);
+  const member = request.agent(app);
+  const ownerToken = await login(owner, "owner@example.test");
+  const memberToken = await login(member, "member@example.test");
+  const created = await member.post("/api/organizations/org-a/conversations").set("x-csrf-token", memberToken).send({
+    subject: "Delivery question", customerMessage: "<script>alert(1)</script>", channel: "web"
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.status, "open");
+  assert.equal(created.body.customerMessage, "<script>alert(1)</script>");
+  const memberUser = await repo.findUserByEmail("member@example.test");
+  const updated = await owner.patch(`/api/organizations/org-a/conversations/${created.body.id}`).set("x-csrf-token", ownerToken).send({
+    status: "escalated", assigneeId: memberUser.id
+  });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.status, "escalated");
+  const list = await member.get("/api/organizations/org-a/conversations");
+  assert.equal(list.status, 200);
+  assert.equal(list.body.conversations.length, 1);
+  assert.equal(Object.prototype.hasOwnProperty.call(list.body.conversations[0], "customerMessage"), false);
+  const crossTenant = await owner.get("/api/organizations/org-b/conversations");
+  assert.equal(crossTenant.status, 403);
+});
