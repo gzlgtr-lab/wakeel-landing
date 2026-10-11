@@ -197,6 +197,22 @@ function createMemoryRepository(seed = []) {
       audit.push({ action: "api_key.created", organizationId, actorId: actor.id, apiKeyId: record.id });
       return { ok: true, key: { id: record.id, name: record.name, secret } };
     },
+    async listApiKeys(userId, organizationId) {
+      if (!memberships.has(`${userId}:${organizationId}`)) return null;
+      return [...apiKeys.values()]
+        .filter((key) => key.organizationId === organizationId)
+        .map(({ keyHash, ...metadata }) => ({ ...metadata, revokedAt: metadata.revokedAt || null }));
+    },
+    async revokeApiKey(actor, organizationId, keyId) {
+      const member = memberships.get(`${actor.id}:${organizationId}`);
+      const key = apiKeys.get(keyId);
+      if (!member || !key || key.organizationId !== organizationId) return { ok: false, reason: "not_found" };
+      if (ROLES[member.role] < ROLES.admin) return { ok: false, reason: "forbidden" };
+      if (key.revokedAt) return { ok: false, reason: "already_revoked" };
+      key.revokedAt = new Date().toISOString();
+      audit.push({ action: "api_key.revoked", organizationId, actorId: actor.id, apiKeyId: keyId });
+      return { ok: true };
+    },
     async createWebhookEndpoint(actor, organizationId, input) {
       const member = memberships.get(`${actor.id}:${organizationId}`);
       if (!member || ROLES[member.role] < ROLES.admin) return { ok: false, reason: "forbidden" };
@@ -356,6 +372,25 @@ function createPostgresRepository(pool) {
         const result = await client.query("INSERT INTO api_keys (organization_id, name, key_hash, created_by) VALUES ($1, $2, $3, $4) RETURNING id, name", [organizationId, input.name, hashSecret(secret), actor.id]);
         await client.query("INSERT INTO audit_events (organization_id, actor_id, action, metadata) VALUES ($1, $2, $3, $4)", [organizationId, actor.id, "api_key.created", JSON.stringify({ apiKeyId: result.rows[0].id })]);
         return { ok: true, key: { ...result.rows[0], secret } };
+      });
+    },
+    async listApiKeys(userId, organizationId) {
+      return withUserContext(userId, async (client) => {
+        const result = await client.query("SELECT id, name, created_by AS \"createdBy\", created_at AS \"createdAt\", revoked_at AS \"revokedAt\" FROM api_keys WHERE organization_id = $1 ORDER BY created_at DESC", [organizationId]);
+        return result.rows;
+      });
+    },
+    async revokeApiKey(actor, organizationId, keyId) {
+      return withUserContext(actor.id, async (client) => {
+        const roleResult = await client.query("SELECT role FROM memberships WHERE organization_id = $1", [organizationId]);
+        if (!roleResult.rows[0] || ROLES[roleResult.rows[0].role] < ROLES.admin) return { ok: false, reason: "forbidden" };
+        const result = await client.query("UPDATE api_keys SET revoked_at = now() WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id", [keyId, organizationId]);
+        if (!result.rowCount) {
+          const existing = await client.query("SELECT id FROM api_keys WHERE id = $1 AND organization_id = $2", [keyId, organizationId]);
+          return { ok: false, reason: existing.rowCount ? "already_revoked" : "not_found" };
+        }
+        await client.query("INSERT INTO audit_events (organization_id, actor_id, action, metadata) VALUES ($1, $2, $3, $4)", [organizationId, actor.id, "api_key.revoked", JSON.stringify({ apiKeyId: keyId })]);
+        return { ok: true };
       });
     },
     async createWebhookEndpoint(actor, organizationId, input) {
@@ -531,6 +566,14 @@ function createApp({ repository, sessionStore, allowDevLogin = false } = {}) {
     if (!req.body || typeof req.body.name !== "string" || req.body.name.trim().length < 1 || req.body.name.length > 100) return res.status(400).json({ error: "api_key_invalid" });
     const result = await repo.createApiKey(req.user, req.organizationId, req.body);
     return result.ok ? res.status(201).json(result.key) : res.status(403).json({ error: result.reason });
+  });
+  app.get("/api/organizations/:organizationId/api-keys", requireAuth, requireMembership, async (req, res) => {
+    res.json({ keys: await repo.listApiKeys(req.user.id, req.organizationId) });
+  });
+  app.delete("/api/organizations/:organizationId/api-keys/:keyId", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
+    const result = await repo.revokeApiKey(req.user, req.organizationId, req.params.keyId);
+    if (result.ok) return res.status(204).end();
+    return res.status(result.reason === "forbidden" ? 403 : result.reason === "already_revoked" ? 409 : 404).json({ error: result.reason });
   });
   app.post("/api/organizations/:organizationId/webhooks", requireAuth, requireMembership, requireRole("admin"), async (req, res) => {
     if (!validateWebhookEndpoint(req.body)) return res.status(400).json({ error: "webhook_invalid" });

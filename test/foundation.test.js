@@ -263,3 +263,25 @@ test("API keys are returned once and webhook signatures reject replay", async ()
   const replay = await request(app).post(`/api/webhooks/${endpoint.body.id}`).set("x-wakeel-event-id", "evt-1").set("x-wakeel-timestamp", timestamp).set("x-wakeel-signature", signature).set("content-type", "application/json").send(body);
   assert.equal(replay.status, 409);
 });
+
+test("API key metadata is tenant-scoped and admin revocation is audited", async () => {
+  const { app, repo } = await fixture();
+  const owner = request.agent(app);
+  const member = request.agent(app);
+  const ownerToken = await login(owner, "owner@example.test");
+  const memberToken = await login(member, "member@example.test");
+  const created = await owner.post("/api/organizations/org-a/api-keys").set("x-csrf-token", ownerToken).send({ name: "Revocable" });
+  assert.equal(created.status, 201);
+  const listed = await member.get("/api/organizations/org-a/api-keys");
+  assert.equal(listed.status, 200);
+  assert.equal(listed.body.keys.length, 1);
+  assert.equal(Object.prototype.hasOwnProperty.call(listed.body.keys[0], "keyHash"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(listed.body.keys[0], "secret"), false);
+  const denied = await member.delete(`/api/organizations/org-a/api-keys/${created.body.id}`).set("x-csrf-token", memberToken);
+  assert.equal(denied.status, 403);
+  const revoked = await owner.delete(`/api/organizations/org-a/api-keys/${created.body.id}`).set("x-csrf-token", ownerToken);
+  assert.equal(revoked.status, 204);
+  assert.equal(repo.audit.at(-1).action, "api_key.revoked");
+  const after = await owner.get("/api/organizations/org-a/api-keys");
+  assert.equal(after.body.keys[0].revokedAt !== null, true);
+});
