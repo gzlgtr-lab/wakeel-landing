@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://getwakeel.dev/sitemap.xml
