@@ -1,52 +1,1806 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wakeel | وكيل الذكاء الاصطناعي لدعم العملاء</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Wakeel هو نظام ذكاء اصطناعي متقدم لدعم العملاء في العربية والتركية والإنجليزية، مع دعم اللهجات، التفاعل المباشر، ونقل الحالات الحرجة إلى فريق الدعم البشري."
+    />
+    <meta
+      name="keywords"
+      content="Wakeel, الذكاء الاصطناعي, دعم العملاء, العربية, التركية, الإنجليزية, دعم العملاء بالهواتف, دعم العملاء عبر chat"
+    />
+    <meta property="og:title" content="Wakeel | الذكاء الاصطناعي لدعم العملاء" />
+    <meta
+      property="og:description"
+      content="حل ذكي ومؤسسي لمحادثات العملاء متعددة اللهجات، مع أمان، تحكم، واستمرارية تشغيل عالية."
+    />
+    <meta property="og:type" content="website" />
+    <title>Wakeel | الذكاء الاصطناعي لدعم العملاء</title>
     <style>
-        body { font-family: system-ui, -apple-system, sans-serif; background-color: #0f172a; color: #f8fafc; }
-        .hero { padding: 100px 0 60px; text-align: center; }
-        .feature-card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px; margin-bottom: 20px; }
-        .btn-primary { background-color: #2563eb; border: none; padding: 12px 32px; border-radius: 8px; font-weight: 600; }
-        .btn-primary:hover { background-color: #1d4ed8; }
+      :root {
+        --bg: #07131f;
+        --bg-soft: #0c1d2d;
+        --panel: rgba(12, 25, 38, 0.9);
+        --panel-strong: #101f30;
+        --panel-alt: #162b40;
+        --line: rgba(148, 163, 184, 0.2);
+        --text: #e5edf7;
+        --muted: #a7bbd0;
+        --muted-strong: #dceaf8;
+        --primary: #6ee7d9;
+        --primary-strong: #2dd4bf;
+        --secondary: #8ac7ff;
+        --accent: #8b5cf6;
+        --accent-soft: rgba(139, 92, 246, 0.14);
+        --success: #2ad4a5;
+        --warning: #f7c95b;
+        --danger: #ff7e7e;
+        --shadow: 0 24px 60px rgba(2, 8, 18, 0.5);
+        --radius: 24px;
+        --radius-sm: 16px;
+        --container: min(1180px, calc(100% - 32px));
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Segoe UI", Tahoma, sans-serif;
+        background:
+          radial-gradient(circle at top, rgba(110, 231, 217, 0.08), transparent 20%),
+          linear-gradient(180deg, #07131f 0%, #0b1725 52%, #07131f 100%);
+        color: var(--text);
+        line-height: 1.7;
+      }
+
+      img {
+        max-width: 100%;
+        display: block;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+
+      .container {
+        width: var(--container);
+        margin: 0 auto;
+      }
+
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      .site-header {
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        background: rgba(7, 19, 31, 0.82);
+        backdrop-filter: blur(16px);
+        border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+      }
+
+      .nav-wrapper {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        min-height: 78px;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 1.4rem;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+      }
+
+      .brand-mark {
+        width: 38px;
+        height: 38px;
+        border-radius: 12px;
+        display: grid;
+        place-items: center;
+        background: linear-gradient(135deg, var(--primary), var(--secondary));
+        color: #03131f;
+        font-weight: 900;
+        box-shadow: 0 12px 30px rgba(46, 204, 196, 0.36);
+      }
+
+      .nav-links {
+        display: flex;
+        align-items: center;
+        gap: 28px;
+        color: var(--muted);
+        font-size: 0.97rem;
+      }
+
+      .nav-links a {
+        transition: color 0.2s ease;
+      }
+
+      .nav-links a:hover,
+      .nav-links a:focus-visible {
+        color: var(--text);
+      }
+
+      .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .btn,
+      .chip,
+      .mini-pill {
+        border: 1px solid transparent;
+        border-radius: 999px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        font-weight: 700;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+      }
+
+      .btn {
+        padding: 0.9rem 1.5rem;
+        cursor: pointer;
+      }
+
+      .btn:hover,
+      .btn:focus-visible,
+      .chip:hover,
+      .chip:focus-visible,
+      .mini-pill:hover,
+      .mini-pill:focus-visible {
+        transform: translateY(-1px);
+      }
+
+      .btn-primary {
+        background: linear-gradient(135deg, var(--primary), var(--secondary));
+        color: #051922;
+        box-shadow: 0 14px 28px rgba(110, 231, 217, 0.2);
+      }
+
+      .btn-secondary {
+        background: rgba(148, 163, 184, 0.06);
+        border-color: rgba(148, 163, 184, 0.24);
+        color: var(--text);
+      }
+
+      .chip {
+        padding: 0.7rem 1rem;
+        background: rgba(110, 231, 217, 0.08);
+        border-color: rgba(110, 231, 217, 0.16);
+        color: var(--primary);
+      }
+
+      .hero {
+        padding: 84px 0 28px;
+      }
+
+      .hero-grid {
+        display: grid;
+        grid-template-columns: 1.1fr 0.9fr;
+        align-items: center;
+        gap: 56px;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0.72rem 1rem;
+        border-radius: 999px;
+        background: rgba(110, 231, 217, 0.06);
+        border: 1px solid rgba(110, 231, 217, 0.18);
+        color: var(--primary);
+        font-size: 0.8rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
+      .eyebrow::before {
+        content: "";
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--success);
+        box-shadow: 0 0 0 6px rgba(42, 212, 165, 0.12);
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      .hero h1 {
+        margin-top: 18px;
+        font-size: clamp(2.7rem, 5vw, 5rem);
+        line-height: 1.08;
+        letter-spacing: -0.06em;
+      }
+
+      .hero h1 .highlight {
+        background: linear-gradient(135deg, var(--primary) 0%, #c1e7ff 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+
+      .hero-copy > p {
+        font-size: 1.14rem;
+        color: var(--muted-strong);
+        max-width: 640px;
+        margin: 22px 0 30px;
+      }
+
+      .cta-row {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin-bottom: 24px;
+      }
+
+      .hero-metrics {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 26px;
+        padding-top: 8px;
+      }
+
+      .metric {
+        min-width: 120px;
+      }
+
+      .metric strong {
+        display: block;
+        font-size: 2rem;
+        letter-spacing: -0.05em;
+      }
+
+      .metric span {
+        color: var(--muted);
+      }
+
+      .dashboard-shell {
+        position: relative;
+        padding: 18px;
+        border: 1px solid rgba(148, 163, 184, 0.22);
+        border-radius: 32px;
+        background: linear-gradient(180deg, rgba(9, 25, 38, 0.94), rgba(8, 19, 30, 0.95));
+        box-shadow: var(--shadow);
+      }
+
+      .dashboard-window {
+        border-radius: 24px;
+        overflow: hidden;
+        border: 1px solid rgba(148, 163, 184, 0.14);
+        background: rgba(15, 31, 46, 0.98);
+      }
+
+      .window-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 18px;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+        background: rgba(13, 28, 41, 0.9);
+      }
+
+      .traffic {
+        display: flex;
+        gap: 8px;
+      }
+
+      .traffic span {
+        width: 12px;
+        height: 12px;
+        display: block;
+        border-radius: 50%;
+      }
+
+      .traffic span:nth-child(1) { background: #ff6b6b; }
+      .traffic span:nth-child(2) { background: #f7c95b; }
+      .traffic span:nth-child(3) { background: #44d681; }
+
+      .window-badge {
+        background: rgba(46, 204, 196, 0.12);
+        border: 1px solid rgba(46, 204, 196, 0.25);
+        color: var(--primary);
+        padding: 0.4rem 0.8rem;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        font-weight: 700;
+      }
+
+      .chat-window {
+        padding: 18px;
+      }
+
+      .chat-row {
+        display: flex;
+        align-items: flex-end;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      .chat-row.incoming {
+        justify-content: flex-start;
+      }
+
+      .chat-row.outgoing {
+        justify-content: flex-end;
+      }
+
+      .avatar {
+        width: 36px;
+        height: 36px;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        font-size: 0.9rem;
+        font-weight: 800;
+      }
+
+      .incoming .avatar {
+        background: rgba(110, 231, 217, 0.18);
+        color: var(--primary);
+      }
+
+      .outgoing .avatar {
+        background: rgba(138, 199, 255, 0.18);
+        color: var(--secondary);
+      }
+
+      .bubble {
+        max-width: min(78%, 380px);
+        border-radius: 18px;
+        padding: 14px 16px;
+        font-size: 0.95rem;
+        line-height: 1.6;
+      }
+
+      .incoming .bubble {
+        background: rgba(148, 163, 184, 0.08);
+        border: 1px solid rgba(148, 163, 184, 0.12);
+        color: var(--muted-strong);
+      }
+
+      .outgoing .bubble {
+        background: linear-gradient(135deg, rgba(110, 231, 217, 0.26), rgba(138, 199, 255, 0.22));
+        border: 1px solid rgba(110, 231, 217, 0.2);
+        color: var(--text);
+      }
+
+      .status-bar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 16px 18px 18px;
+        border-top: 1px solid rgba(148, 163, 184, 0.14);
+        background: rgba(14, 29, 42, 0.8);
+      }
+
+      .status-label {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--muted);
+      }
+
+      .status-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--success);
+        box-shadow: 0 0 0 6px rgba(42, 212, 165, 0.15);
+      }
+
+      .status-score {
+        font-weight: 800;
+        letter-spacing: -0.04em;
+      }
+
+      .section {
+        padding: 110px 0;
+      }
+
+      .section.alt {
+        background: rgba(13, 24, 35, 0.7);
+        border-top: 1px solid rgba(148, 163, 184, 0.14);
+        border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+      }
+
+      .section-head {
+        max-width: 720px;
+        margin: 0 auto 44px;
+        text-align: center;
+      }
+
+      .section-head .kicker {
+        color: var(--primary);
+        letter-spacing: 0.12em;
+        font-size: 0.78rem;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .section-head h2 {
+        margin-top: 14px;
+        font-size: clamp(2rem, 4vw, 3rem);
+        letter-spacing: -0.06em;
+      }
+
+      .section-head p {
+        margin-top: 18px;
+        color: var(--muted);
+        font-size: 1.05rem;
+      }
+
+      .feature-grid,
+      .value-grid,
+      .step-grid,
+      .industry-grid,
+      .pricing-grid,
+      .integration-grid,
+      .trust-grid {
+        display: grid;
+        gap: 20px;
+      }
+
+      .value-grid,
+      .feature-grid,
+      .step-grid,
+      .integration-grid,
+      .industry-grid,
+      .trust-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .feature-card,
+      .value-card,
+      .step-card,
+      .industry-card,
+      .integration-card,
+      .trust-card,
+      .pricing-card,
+      .faq-item {
+        background: rgba(16, 31, 48, 0.92);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        border-radius: var(--radius-sm);
+        padding: 24px;
+        box-shadow: 0 16px 40px rgba(6, 12, 20, 0.2);
+      }
+
+      .feature-card .icon,
+      .value-card .icon,
+      .step-card .icon,
+      .integration-card .icon,
+      .trust-card .icon {
+        width: 52px;
+        height: 52px;
+        display: grid;
+        place-items: center;
+        border-radius: 16px;
+        background: rgba(110, 231, 217, 0.08);
+        border: 1px solid rgba(110, 231, 217, 0.16);
+        color: var(--primary);
+        font-size: 1.5rem;
+        margin-bottom: 18px;
+      }
+
+      .feature-card h3,
+      .value-card h3,
+      .step-card h3,
+      .industry-card h3,
+      .integration-card h3,
+      .trust-card h3,
+      .pricing-card h3 {
+        font-size: 1.42rem;
+        letter-spacing: -0.04em;
+        margin-bottom: 12px;
+      }
+
+      .feature-card p,
+      .value-card p,
+      .step-card p,
+      .industry-card p,
+      .integration-card p,
+      .trust-card p,
+      .pricing-card p,
+      .faq-item p {
+        color: var(--muted);
+        margin-bottom: 0;
+      }
+
+      .simulator-wrap {
+        display: grid;
+        grid-template-columns: 1.35fr 0.65fr;
+        gap: 24px;
+        align-items: stretch;
+      }
+
+      .simulator-panel,
+      .simulator-aside {
+        background: rgba(16, 31, 48, 0.92);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        border-radius: var(--radius);
+        padding: 22px;
+      }
+
+      .simulator-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        margin-bottom: 18px;
+      }
+
+      .lang-switcher {
+        display: inline-flex;
+        background: rgba(148, 163, 184, 0.05);
+        border: 1px solid rgba(148, 163, 184, 0.14);
+        border-radius: 999px;
+        padding: 4px;
+      }
+
+      .lang-switcher button,
+      .scenario-switcher button {
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+        padding: 0.7rem 1rem;
+        border-radius: 999px;
+        cursor: pointer;
+        font-weight: 700;
+      }
+
+      .lang-switcher button.active,
+      .scenario-switcher button.active {
+        background: rgba(110, 231, 217, 0.12);
+        color: var(--text);
+        box-shadow: inset 0 0 0 1px rgba(110, 231, 217, 0.22);
+      }
+
+      .scenario-switcher {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .simulator-thread {
+        display: grid;
+        gap: 18px;
+        min-height: 390px;
+      }
+
+      .simulator-thread .chat-row {
+        margin-bottom: 0;
+      }
+
+      .simulator-aside {
+        display: grid;
+        gap: 16px;
+        align-content: start;
+      }
+
+      .aside-card {
+        background: rgba(10, 18, 28, 0.7);
+        border: 1px solid rgba(148, 163, 184, 0.14);
+        border-radius: 20px;
+        padding: 18px;
+      }
+
+      .aside-card h3 {
+        margin-bottom: 10px;
+        font-size: 1.15rem;
+      }
+
+      .aside-card p {
+        color: var(--muted);
+      }
+
+      .tag-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      .mini-pill {
+        padding: 0.55rem 0.8rem;
+        background: rgba(138, 199, 255, 0.08);
+        border-color: rgba(138, 199, 255, 0.16);
+        color: var(--secondary);
+        font-size: 0.78rem;
+      }
+
+      .step-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      .step-card {
+        position: relative;
+        overflow: hidden;
+      }
+
+      .step-number {
+        position: absolute;
+        top: 20px;
+        left: 22px;
+        font-size: 2.7rem;
+        line-height: 1;
+        letter-spacing: -0.08em;
+        color: rgba(110, 231, 217, 0.1);
+        font-weight: 900;
+      }
+
+      .step-card h3,
+      .step-card p {
+        position: relative;
+        z-index: 1;
+      }
+
+      .step-card h3 {
+        margin-top: 28px;
+      }
+
+      .trust-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      .trust-card {
+        min-height: 210px;
+      }
+
+      .logo-row {
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 18px;
+        margin-top: 28px;
+      }
+
+      .logo-item {
+        min-width: 108px;
+        text-align: center;
+        padding: 14px 18px;
+        border-radius: 14px;
+        background: rgba(148, 163, 184, 0.04);
+        border: 1px solid rgba(148, 163, 184, 0.12);
+        color: var(--muted);
+        font-weight: 700;
+      }
+
+      .breakdown {
+        display: grid;
+        grid-template-columns: 1.2fr 0.8fr;
+        gap: 26px;
+        align-items: center;
+      }
+
+      .score-card {
+        background: linear-gradient(135deg, rgba(110, 231, 217, 0.08), rgba(138, 199, 255, 0.06));
+        border: 1px solid rgba(110, 231, 217, 0.18);
+        border-radius: var(--radius);
+        padding: 26px;
+      }
+
+      .score-card h3 {
+        font-size: clamp(2.1rem, 4vw, 3.4rem);
+        letter-spacing: -0.07em;
+        margin-bottom: 12px;
+      }
+
+      .score-card .subtext {
+        color: var(--muted);
+      }
+
+      .score-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 20px;
+      }
+
+      .score-grid div {
+        background: rgba(148, 163, 184, 0.04);
+        border: 1px solid rgba(148, 163, 184, 0.12);
+        padding: 18px 14px;
+        border-radius: 16px;
+      }
+
+      .score-grid strong {
+        display: block;
+        font-size: 1.5rem;
+        letter-spacing: -0.05em;
+      }
+
+      .roi-form {
+        display: grid;
+        gap: 18px;
+      }
+
+      .roi-field {
+        display: grid;
+        gap: 10px;
+      }
+
+      .roi-field label {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        color: var(--muted-strong);
+        font-weight: 600;
+      }
+
+      .roi-field input[type="range"] {
+        width: 100%;
+        accent-color: var(--primary-strong);
+      }
+
+      .result-card {
+        background: rgba(6, 19, 29, 0.9);
+        border: 1px solid rgba(148, 163, 184, 0.12);
+        border-radius: 18px;
+        padding: 20px;
+      }
+
+      .result-card strong {
+        display: block;
+        font-size: clamp(2.2rem, 5vw, 3rem);
+        letter-spacing: -0.08em;
+        margin: 8px 0;
+      }
+
+      .industry-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      .industry-card {
+        min-height: 200px;
+      }
+
+      .industry-card .badge {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        color: var(--primary);
+        background: rgba(110, 231, 217, 0.08);
+        border: 1px solid rgba(110, 231, 217, 0.14);
+        font-size: 0.76rem;
+        font-weight: 700;
+        padding: 0.5rem 0.8rem;
+        margin-bottom: 14px;
+      }
+
+      .pricing-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .pricing-card {
+        position: relative;
+      }
+
+      .pricing-card.featured {
+        background: linear-gradient(180deg, rgba(110, 231, 217, 0.08), rgba(16, 31, 48, 0.94));
+        border-color: rgba(110, 231, 217, 0.28);
+        transform: translateY(-6px);
+      }
+
+      .pricing-card .plan-tag {
+        display: inline-flex;
+        margin-bottom: 12px;
+        background: rgba(138, 199, 255, 0.08);
+        color: var(--secondary);
+        border: 1px solid rgba(138, 199, 255, 0.18);
+        border-radius: 999px;
+        padding: 0.5rem 0.8rem;
+        font-weight: 700;
+        font-size: 0.78rem;
+      }
+
+      .price {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        margin: 18px 0;
+      }
+
+      .price strong {
+        font-size: 2.7rem;
+        letter-spacing: -0.08em;
+      }
+
+      .price span {
+        color: var(--muted);
+      }
+
+      .pricing-card ul {
+        list-style: none;
+        padding: 0;
+        margin: 20px 0 26px;
+        display: grid;
+        gap: 12px;
+        color: var(--muted-strong);
+      }
+
+      .pricing-card li::before {
+        content: "✓";
+        display: inline-block;
+        width: 20px;
+        color: var(--success);
+        font-weight: 800;
+      }
+
+      .faq-list {
+        display: grid;
+        gap: 14px;
+      }
+
+      .faq-item {
+        padding: 0;
+        overflow: hidden;
+      }
+
+      .faq-question {
+        width: 100%;
+        background: transparent;
+        color: var(--text);
+        border: none;
+        padding: 22px 20px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        text-align: right;
+        font-size: 1.04rem;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .faq-answer {
+        max-height: 0;
+        overflow: hidden;
+        transition: max-height 0.25s ease;
+      }
+
+      .faq-item.open .faq-answer {
+        max-height: 180px;
+      }
+
+      .faq-answer p {
+        padding: 0 20px 22px;
+      }
+
+      .faq-icon {
+        font-size: 1.5rem;
+        color: var(--primary);
+      }
+
+      .cta-panel {
+        padding: 42px 0 110px;
+      }
+
+      .cta-box {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        background: linear-gradient(135deg, rgba(110, 231, 217, 0.1), rgba(15, 31, 46, 0.96));
+        border: 1px solid rgba(110, 231, 217, 0.18);
+        border-radius: var(--radius);
+        padding: 28px 30px;
+      }
+
+      .cta-box h3 {
+        font-size: clamp(1.7rem, 3vw, 2.7rem);
+        letter-spacing: -0.05em;
+        margin-bottom: 12px;
+      }
+
+      .cta-box p {
+        color: var(--muted)
+      }
+
+      .demo-form {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .demo-form input {
+        width: min(320px, 100%);
+        background: rgba(7, 19, 31, 0.92);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        color: var(--text);
+        border-radius: 999px;
+        padding: 0.9rem 1.1rem;
+      }
+
+      .form-status {
+        margin-top: 10px;
+        font-weight: 600;
+        color: var(--primary);
+      }
+
+      .site-footer {
+        padding: 28px 0 52px;
+        border-top: 1px solid rgba(148, 163, 184, 0.14);
+      }
+
+      .footer-grid {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 18px;
+        flex-wrap: wrap;
+        color: var(--muted);
+      }
+
+      .footer-links {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+
+      .footer-links a:hover,
+      .footer-links a:focus-visible {
+        color: var(--text);
+      }
+
+      @media (max-width: 980px) {
+        .nav-links {
+          display: none;
+        }
+
+        .hero-grid,
+        .simulator-wrap,
+        .breakdown,
+        .value-grid,
+        .feature-grid,
+        .step-grid,
+        .integration-grid,
+        .industry-grid,
+        .pricing-grid,
+        .trust-grid {
+          grid-template-columns: 1fr 1fr;
+        }
+
+        .hero-grid,
+        .simulator-wrap,
+        .breakdown {
+          grid-template-columns: 1fr;
+        }
+
+        .cta-box {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+      }
+
+      @media (max-width: 640px) {
+        .hero {
+          padding-top: 60px;
+        }
+
+        .hero-metrics,
+        .feature-grid,
+        .value-grid,
+        .step-grid,
+        .integration-grid,
+        .industry-grid,
+        .pricing-grid,
+        .trust-grid,
+        .score-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .nav-wrapper {
+          min-height: 68px;
+        }
+
+        .header-actions .btn-secondary {
+          display: none;
+        }
+
+        .demo-form {
+          width: 100%;
+        }
+
+        .demo-form input {
+          width: 100%;
+        }
+      }
     </style>
-</head>
-<body>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container nav-wrapper">
+        <a href="#top" class="brand" aria-label="Wakeel home">
+          <span class="brand-mark">و</span>
+          <span>Wakeel</span>
+        </a>
 
-    <div class="container hero">
-        <h1 class="display-4 fw-bold mb-3">Wakeel — وكيل الذكاء الاصطناعي لدعم العملاء</h1>
-        <p class="lead text-secondary mb-4">ردود ذكية باللهجات العربية (شامي، خليجي، مصري) والتركية والإنكليزية، بدقة متناهية من قاعدة معرفتك فقط.</p>
-        <a href="mailto:hello@getwakeel.dev" class="btn btn-primary btn-lg">تواصل معنا للتجربة</a>
-    </div>
+        <nav class="nav-links" aria-label="Main navigation">
+          <a href="#why">لماذا Wakeel</a>
+          <a href="#product">المنتج</a>
+          <a href="#security">الأمان</a>
+          <a href="#roi">العائد</a>
+          <a href="#pricing">التسعير</a>
+        </nav>
 
-    <div class="container py-5">
-        <div class="row">
-            <div class="col-md-4">
-                <div class="feature-card">
-                    <h3>🗣️ تعدد اللغات واللهجات</h3>
-                    <p class="text-secondary">يتحدث بأسلوب عميلك المحلي بمرونة عالية ودون تعقيد.</p>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="feature-card">
-                    <h3>🎯 دقة دون تهيؤات</h3>
-                    <p class="text-secondary">يستجيب حصرياً من قاعدة بيانات شركتك المخزنة دون التكهن ببيانات خارجية.</p>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="feature-card">
-                    <h3>🤝 تحويل سلس للبشر</h3>
-                    <p class="text-secondary">اكتشاف حالات الغضب والاسترداد وتحويلها مباشرة لموظفي الدعم.</p>
-                </div>
-            </div>
+        <div class="header-actions">
+          <a href="#pricing" class="btn btn-secondary">خطط الأسعار</a>
+          <a href="#demo" class="btn btn-primary">احجز عرضًا تجريبيًا</a>
         </div>
-    </div>
+      </div>
+    </header>
 
-    <footer class="text-center py-4 text-secondary border-top border-secondary">
-        <small>© 2026 Wakeel. جميع الحقوق محفوظة.</small>
+    <main id="top">
+      <section class="hero">
+        <div class="container hero-grid">
+          <div class="hero-copy">
+            <span class="eyebrow">ذكاء اصطناعي متخصص في دعم العملاء</span>
+            <h1>
+              دعم عملاء عربي، تركي، وإنجليزي
+              <span class="highlight">بلهجات حقيقية وقرارات دقيقة.</span>
+            </h1>
+            <p>
+              Wakeel يحول محادثات العملاء إلى تجربة فورية وموثوقة عبر جميع القنوات؛
+              من الرد السريع في العربية واللهجات المحلية إلى الاسترداد الذكي وتنسيق
+              التحويل للبشر عند الحاجة، كل ذلك من قاعدة معارفك فقط دون افتراضات
+              خارجية أو هلوسات ومعلومات غير موثوقة.
+            </p>
+
+            <div class="cta-row">
+              <a href="#demo" class="btn btn-primary">ابدأ تجاربك المجانية</a>
+              <a href="#product" class="btn btn-secondary">شاهد المنتج في العمل</a>
+            </div>
+
+            <div class="hero-metrics" aria-label="Wakeel performance metrics">
+              <div class="metric">
+                <strong>92%</strong>
+                <span>حل ذاتي</span>
+              </div>
+              <div class="metric">
+                <strong>4.7x</strong>
+                <span>سرعة الاستجابة</span>
+              </div>
+              <div class="metric">
+                <strong>24/7</strong>
+                <span>جاهز للتشغيل</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="dashboard-shell" aria-label="Wakeel dashboard preview">
+            <div class="dashboard-window">
+              <div class="window-bar">
+                <div class="traffic" aria-hidden="true">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                <div class="window-badge">Live agent</div>
+              </div>
+
+              <div class="chat-window">
+                <div class="chat-row incoming">
+                  <div class="avatar">و</div>
+                  <div class="bubble">
+                    مرحبًا، أحتاج إلى معرفة موعد التسليم والخصم المتاح على الطلب الحالي.
+                  </div>
+                </div>
+
+                <div class="chat-row outgoing">
+                  <div class="avatar">AI</div>
+                  <div class="bubble">
+                    تم تحديث الطلب رقم 1847، ومتبقي للتسليم 2 أيام. لديك رصيد خصم 240
+                    ريال، ويمكنني مساعدتك في تأكيد عنوان التوصيل الآن.
+                  </div>
+                </div>
+
+                <div class="chat-row incoming">
+                  <div class="avatar">م</div>
+                  <div class="bubble">
+                    ممتاز، أريد أن أحافظ على نفس العنوان وأستبدل المنتج إن لزم الأمر.
+                  </div>
+                </div>
+              </div>
+
+              <div class="status-bar">
+                <div class="status-label">
+                  <span class="status-dot" aria-hidden="true"></span>
+                  النظام يعمل بشكل مستمر
+                </div>
+                <div class="status-score">معدل رضا 4.9/5</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="why">
+        <div class="container">
+          <div class="section-head">
+            <div class="kicker">لماذا Wakeel</div>
+            <h2>حلاً يدعم العملاء بطريقة تتناسب مع ثقافة كل سوق.</h2>
+            <p>
+              الشركات لا تحتاج فقط إلى «ذكاء اصطناعي»، بل إلى نظام يفهم السياق، يحترم
+              لهجات العملاء، ويعمل ضمن سياسات الخدمة والامتثال الداخلية.
+            </p>
+          </div>
+
+          <div class="value-grid">
+            <article class="value-card">
+              <div class="icon">🗣️</div>
+              <h3>فهم اللهجات واللغة المحلية</h3>
+              <p>
+                يدعم العربية الفصحى، واللهجات الخليجية والمصرية والشامية، بالإضافة إلى
+                التركية والإنجليزية، مع نبرة مناسبة لكل عميل.
+              </p>
+            </article>
+
+            <article class="value-card">
+              <div class="icon">🎯</div>
+              <h3>إجابات موثوقة من بياناتك فقط</h3>
+              <p>
+                يستند إلى معرفة المؤسسة، وأوامر الشراء، والسياسات الداخلية، ولا يرد على
+                أسئلة العملاء من معلومات غير موثقة أو خارج النظام.
+              </p>
+            </article>
+
+            <article class="value-card">
+              <div class="icon">🤝</div>
+              <h3>تحويل ذكي عند الحاجة</h3>
+              <p>
+                يكتشف حالات الاستياء أو التوتر أو تعقيد الطلب، ثم ينقل العميل إلى فريق
+                الدعم البشري مع السياق الكامل لتجنب تكرار القصة.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section alt" id="product">
+        <div class="container">
+          <div class="section-head">
+            <div class="kicker">تجربة المنتج</div>
+            <h2>تجربة حية لا تُرينا الصفحة فحسب، بل تُظهر كيف تبدو الخدمة فعليًا.</h2>
+          </div>
+
+          <div class="simulator-wrap">
+            <div class="simulator-panel">
+              <div class="simulator-toolbar">
+                <div class="lang-switcher" aria-label="Select customer language">
+                  <button type="button" class="active" aria-pressed="true" data-lang="ar">عربي</button>
+                  <button type="button" aria-pressed="false" data-lang="tr">Türkçe</button>
+                  <button type="button" aria-pressed="false" data-lang="en">English</button>
+                </div>
+
+                <div class="scenario-switcher" aria-label="Select scenario">
+                  <button type="button" class="active" aria-pressed="true" data-scenario="retail">تجارة</button>
+                  <button type="button" aria-pressed="false" data-scenario="bank">بنوك</button>
+                  <button type="button" aria-pressed="false" data-scenario="telecom">اتصالات</button>
+                </div>
+              </div>
+
+              <div class="simulator-thread" id="simulatorThread">
+                <div class="chat-row incoming">
+                  <div class="avatar">م</div>
+                  <div class="bubble">أحتاج إلى معرفة سبب تأخر الشحنة وكم سيستغرق عودتها...</div>
+                </div>
+                <div class="chat-row outgoing">
+                  <div class="avatar">AI</div>
+                  <div class="bubble">تم اكتشاف تأخير في التوصيل بسبب عامل لوجستي. أستطيع تفعيل استرداد 240 ريال وإنشاء طلب استبدال خلال 90 ثانية.</div>
+                </div>
+              </div>
+            </div>
+
+            <aside class="simulator-aside" aria-live="polite">
+              <div class="aside-card">
+                <div class="kicker" style="color: var(--secondary); letter-spacing: 0.08em; font-size: 0.72rem; font-weight: 800;">حالة العميل</div>
+                <h3 id="scenarioTitle">تأخر الشحنة في التجارة الإلكترونية</h3>
+                <p id="scenarioSummary">تم التعرف على نبرة قلق مرتفعة، مع احتمال لرفع شكوى إذا استمرت المشكلة أكثر من 24 ساعة.</p>
+                <div class="tag-list" id="scenarioTags">
+                  <span class="mini-pill">استرداد سريع</span>
+                  <span class="mini-pill">حالة مرتفعة</span>
+                  <span class="mini-pill">تحويل للبشر</span>
+                </div>
+              </div>
+
+              <div class="aside-card">
+                <h3>مؤشرات الأداء</h3>
+                <div class="score-grid">
+                  <div>
+                    <strong>84%</strong>
+                    <span>حل ذاتي</span>
+                  </div>
+                  <div>
+                    <strong>1.4m</strong>
+                    <span>متوسط زمن الاستجابة</span>
+                  </div>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <div class="section-head">
+            <div class="kicker">كيف يعمل</div>
+            <h2>من السؤال الأول إلى القرار النهائي، كل شيء في مسار واحد.</h2>
+          </div>
+
+          <div class="step-grid">
+            <article class="step-card">
+              <span class="step-number">01</span>
+              <h3>جمع السياق</h3>
+              <p>يفهم لغة العميل، وملف الطلب، وسجل الاتصال، وقيمة الحالة دون الحاجة إلى إعادة السؤال.</p>
+            </article>
+
+            <article class="step-card">
+              <span class="step-number">02</span>
+              <h3>تقييم الحالة</h3>
+              <p>يحدد ما إذا كانت المشكلة تحتاج إلى توضيح، استرداد، إعفاء، أو تحويل إلى موظف إنساني.</p>
+            </article>
+
+            <article class="step-card">
+              <span class="step-number">03</span>
+              <h3>إصدار الإجابة</h3>
+              <p>يصدر استجابة دقيقة ومناسبة للنبرة، مستندة إلى السياسات والمعرفة المؤسسة فقط.</p>
+            </article>
+
+            <article class="step-card">
+              <span class="step-number">04</span>
+              <h3>مراقبة وتحسين</h3>
+              <p>يُسجل القرار والنتيجة، ثم يراجع الأداء كل يوم لضبط السياسة ومنع تكرار الأخطاء.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section alt">
+        <div class="container">
+          <div class="section-head">
+            <div class="kicker">التكامل</div>
+            <h2>يدمج بسهولة مع الأنظمة التي يعتمد عليها فريق الدعم لديك.</h2>
+          </div>
+
+          <div class="integration-grid">
+            <article class="integration-card">
+              <div class="icon">📦</div>
+              <h3>نظام الطلبات</h3>
+              <p>تفعيل فريق دعم لرحلة الطلب من الخروج إلى التسليم وأخطاء التحديث.</p>
+            </article>
+
+            <article class="integration-card">
+              <div class="icon">💬</div>
+              <h3>قنوات التواصل</h3>
+              <p>محادثات واتساب، موقعك، التطبيق، ومركز الاتصال في نفس السياق.</p>
+            </article>
+
+            <article class="integration-card">
+              <div class="icon">🧾</div>
+              <h3>نظام CRM</h3>
+              <p>تتبع عميل، تفاصيل الطلب، وتاريخ التفاعل لتفادي المكالمات المتكررة.</p>
+            </article>
+          </div>
+
+          <div class="logo-row" aria-label="Partner and integration list">
+            <div class="logo-item">Zendesk</div>
+            <div class="logo-item">SAP</div>
+            <div class="logo-item">Freshdesk</div>
+            <div class="logo-item">HubSpot</div>
+            <div class="logo-item">Shopify</div>
+            <div class="logo-item">Dynamics</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="security">
+        <div class="container">
+          <div class="section-head">
+            <div class="kicker">التحويل البشري والأمان</div>
+            <h2>عندما تكون الحالة حرجة، يمر العميل إلى إنسان مناسب بسرعة وبدون تكرار.</h2>
+          </div>
+
+          <div class="trust-grid">
+            <article class="trust-card">
+              <div class="icon">🛡️</div>
+              <h3>حماية البيانات</h3>
+              <p>تشفير البيانات في النقل والتخزين، مع صلاحيات مخصصة لكل فريق وأدوات تدقيق.</p>
+            </article>
+
+            <article class="trust-card">
+              <div class="icon">📋</div>
+              <h3>التحكم والسياسات</h3>
+              <p>تحديد ما يسمح به المساعد، ومن يحق له الوصول إلى كل نوع من المعلومات.</p>
+            </article>
+
+            <article class="trust-card">
+              <div class="icon">👥</div>
+              <h3>تحويل ذكي للبشر</h3>
+              <p>يُميز بين طلبات الاحتفاظ، الشكاوى، ومشكلات الخدمة الحرجة لتوجيهها إلى الفريق المناسب.</p>
+            </article>
+
+            <article class="trust-card">
+              <div class="icon">📊</div>
+              <h3>تتبع الأداء</h3>
+              <p>لوحات أداء واضحة لوقت الاستجابة، نسبة الحل الذاتي، ومعدل التحويل إلى الدعم البشري.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section alt" id="roi">
+        <div class="container">
+          <div class="section-head">
+            <div class="kicker">تقدير العائد</div>
+            <h2>إظهار الفارق المالي في أقل من دقيقة.</h2>
+          </div>
+
+          <div class="breakdown">
+            <div class="score-card" aria-live="polite">
+              <div class="kicker" style="color: var(--primary); letter-spacing: 0.08em; font-size: 0.72rem; font-weight: 800;">تقدير سنوي</div>
+              <h3 id="roiResult">SAR 1,425,000</h3>
+              <div class="subtext">المدخرات المتوقعة من تقليل الجهد اليدوي وتحسين الوقت إلى الحل.</div>
+
+              <div class="score-grid">
+                <div>
+                  <strong id="ticketReduction">-38%</strong>
+                  <span>انخفاض طلبات الدعم</span>
+                </div>
+                <div>
+                  <strong id="avgResolution">2.8m</strong>
+                  <span>متوسط حل الحادثة</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="roi-form" aria-label="ROI calculation form">
+              <div class="roi-field">
+                <label for="monthlyTickets">
+                  <span>عدد التذاكر الشهرية</span>
+                  <strong id="monthlyTicketsValue">18,000</strong>
+                </label>
+                <input id="monthlyTickets" type="range" min="2000" max="50000" step="500" value="18000" />
+              </div>
+
+              <div class="roi-field">
+                <label for="automationRate">
+                  <span>نسبة الحل الذاتي</span>
+                  <strong id="automationRateValue">68%</strong>
+                </label>
+                <input id="automationRate" type="range" min="20" max="95" step="1" value="68" />
+              </div>
+
+              <div class="roi-field">
+                <label for="avgHandleTime">
+                  <span>متوسط وقت التعامل</span>
+                  <strong id="avgHandleTimeValue">5.4 دقيقة</strong>
+                </label>
+                <input id="avgHandleTime" type="range" min="1" max="15" step="0.2" value="5.4" />
+              </div>
+
+              <div class="result-card">
+                <div class="kicker" style="color: var(--primary); letter-spacing: 0.1em; font-size: 0.72rem; font-weight: 800;">المدخرات السنوية</div>
+                <strong id="annualSavings">SAR 1,425,000</strong>
+                <div>بافتراض متوسط تكلفة تعامل 38 ريال لكل تذكرة.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <div class="section-head">
+            <div class="kicker">المجالات المناسبة</div>
+            <h2>مناسب للقطاع الذي يعاني من عدد كبير من التفاعلات اليومية.</h2>
+          </div>
+
+          <div class="industry-grid">
+            <article class="industry-card">
+              <div class="badge">Retail</div>
+              <h3>التجارة الإلكترونية</h3>
+              <p>تتبع الطلبات، الاسترجاع، وطلبات التخصيص مع تحكم كامل في جودة الخدمة.</p>
+            </article>
+
+            <article class="industry-card">
+              <div class="badge">Banking</div>
+              <h3>المصارف</h3>
+              <p>محادثات حول الحسابات، التحويلات، والاعتراضات على المعاملات بطريقة آمنة.</p>
+            </article>
+
+            <article class="industry-card">
+              <div class="badge">Telecom</div>
+              <h3>الاتصالات</h3>
+              <p>حل فوري لأعطال الشبكة، خطط الاشتراك، وتحديثات الحسابات في أكثر من لغة.</p>
+            </article>
+
+            <article class="industry-card">
+              <div class="badge">Healthcare</div>
+              <h3>الرعاية الصحية</h3>
+              <p>توجيه العملاء إلى المعلومات الحيوية وفق سياسات واضحة ومرجعية داخل المؤسسة.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section alt" id="pricing">
+        <div class="container">
+          <div class="section-head">
+            <div class="kicker">التسعير</div>
+            <h2>خطط تناسب المراحل المختلفة من النمو.</h2>
+          </div>
+
+          <div class="pricing-grid">
+            <article class="pricing-card">
+              <div class="plan-tag">Starter</div>
+              <h3>للمتاجر الصغيرة</h3>
+              <div class="price"><strong>SAR 699</strong><span>/شهر</span></div>
+              <p>للمؤسسات الناشئة التي تبدأ رحلة دعمها الرقمي.</p>
+              <ul>
+                <li>حل ذكي لعدة قنوات</li>
+                <li>توافق مع العربية والإنجليزية</li>
+                <li>تقارير أساسية</li>
+              </ul>
+              <a href="#demo" class="btn btn-secondary">ابدأ الآن</a>
+            </article>
+
+            <article class="pricing-card featured">
+              <div class="plan-tag">Growth</div>
+              <h3>للمؤسسات النشطة</h3>
+              <div class="price"><strong>SAR 2,490</strong><span>/شهر</span></div>
+              <p>للباقات المتنامية التي تحتاج إلى أتمتة أكثر ودمج أوسع.</p>
+              <ul>
+                <li>حلّ متعدد اللغات</li>
+                <li>تحويل ذكي للبشر</li>
+                <li>تحليلات متقدمة</li>
+              </ul>
+              <a href="#demo" class="btn btn-primary">اختر هذه الخطة</a>
+            </article>
+
+            <article class="pricing-card">
+              <div class="plan-tag">Enterprise</div>
+              <h3>للمنظمات الكبيرة</h3>
+              <div class="price"><strong>مخصصة</strong><span></span></div>
+              <p>للمجموعات التي تحتاج إلى سياسات متقدمة، أمان عالي، وثقل تشغيل واسع.</p>
+              <ul>
+                <li>مراقبة وتدقيق واسع</li>
+                <li>استضافة حسب الاحتياج</li>
+                <li>دعم فني مخصص</li>
+              </ul>
+              <a href="#demo" class="btn btn-secondary">تحدث إلى المبيعات</a>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <div class="section-head">
+            <div class="kicker">أسئلة شائعة</div>
+            <h2>نجيب على أعلى المخاوف قبل أن تبدأ التجربة.</h2>
+          </div>
+
+          <div class="faq-list">
+            <article class="faq-item open">
+              <button class="faq-question" type="button" aria-expanded="true">
+                هل يمكن تفعيل Wakeel مع بيانات شركتي فقط؟
+                <span class="faq-icon">+</span>
+              </button>
+              <div class="faq-answer">
+                <p>نعم. يعمل النموذج على قاعدة معرفتك، وسياساتك، وقواعد الاسترداد أو التوجيه الداخلية، بدون الاعتماد على معلومات خارجية أو غير مضمونة.</p>
+              </div>
+            </article>
+
+            <article class="faq-item">
+              <button class="faq-question" type="button" aria-expanded="false">
+                ماذا يحدث إذا لم ينجح المساعد في الإجابة؟
+                <span class="faq-icon">+</span>
+              </button>
+              <div class="faq-answer">
+                <p>يتخذ النظام قرارًا ذكيًا: إما يطلب توضيحًا إضافيًا، أو يُسند الحالة لفريق خدمة العملاء مع السياق الكامل، لذلك لا يضيع العميل في حلقة تكرار.</p>
+              </div>
+            </article>
+
+            <article class="faq-item">
+              <button class="faq-question" type="button" aria-expanded="false">
+                هل يدعم النظام العربية واللهجات المحلية؟
+                <span class="faq-icon">+</span>
+              </button>
+              <div class="faq-answer">
+                <p>نعم، يدعم Wakeel العربية الفصحى، واللهجات الخليجية، العربية المصرية، والعربية الشامية، بالإضافة إلى التركية والإنجليزية بدرجات مختلفة حسب نموذج العميل.</p>
+              </div>
+            </article>
+
+            <article class="faq-item">
+              <button class="faq-question" type="button" aria-expanded="false">
+                هل يمكن دمج Wakeel مع قنوات الاتصال الحالية؟
+                <span class="faq-icon">+</span>
+              </button>
+              <div class="faq-answer">
+                <p>نعم. يمكن ربط النظام مع قنوات التواصل، CRM، أنظمة الطلبات، ومراكز الاتصال الحالية مع أمان واضح واستمرارية تشغيل مناسبة.</p>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="cta-panel" id="demo">
+        <div class="container">
+          <div class="cta-box">
+            <div>
+              <div class="kicker" style="color: var(--primary); letter-spacing: 0.08em; font-size: 0.72rem; font-weight: 800;">ابدأ الآن</div>
+              <h3>التواصل مع فريق Wakeel لتجربة مناسبة لاحتياجك.</h3>
+              <p>أرسل بريدًا إلكترونيًا وسنرتب لك عرضًا تجريبيًا مخصصًا خلال يوم عمل واحد.</p>
+            </div>
+
+            <form class="demo-form" id="demoForm">
+              <label class="visually-hidden" for="emailInput">البريد الإلكتروني</label>
+              <input id="emailInput" type="email" placeholder="name@company.com" aria-label="البريد الإلكتروني" required />
+              <button type="submit" class="btn btn-primary">احجز العرض</button>
+            </form>
+          </div>
+          <div class="form-status" id="formStatus" aria-live="polite"></div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-grid">
+        <div class="brand" aria-label="Wakeel footer brand">
+          <span class="brand-mark">و</span>
+          <span>Wakeel</span>
+        </div>
+
+        <div class="footer-links">
+          <a href="#why">لماذا Wakeel</a>
+          <a href="#security">الأمان</a>
+          <a href="#roi">العائد</a>
+          <a href="#pricing">التسعير</a>
+        </div>
+
+        <div>© 2026 Wakeel. جميع الحقوق محفوظة.</div>
+      </div>
     </footer>
 
-</body>
+    <script>
+      const scenarioData = {
+        retail: {
+          title: 'تأخر الشحنة في التجارة الإلكترونية',
+          summary: 'تم التعرف على نبرة قلق مرتفعة، مع احتمال لرفع شكوى إذا استمرت المشكلة أكثر من 24 ساعة.',
+          tags: ['استرداد سريع', 'حالة مرتفعة', 'تحويل للبشر'],
+          messages: {
+            ar: [
+              { role: 'incoming', text: 'أحتاج إلى معرفة سبب تأخر الشحنة وكم سيستغرق عودتها...' },
+              { role: 'outgoing', text: 'تم اكتشاف تأخير في التوصيل بسبب عامل لوجستي. أستطيع تفعيل استرداد 240 ريال وإنشاء طلب استبدال خلال 90 ثانية.' }
+            ],
+            tr: [
+              { role: 'incoming', text: 'Siparişim neden gecikti ve iadesi ne kadar sürecek?' },
+              { role: 'outgoing', text: 'Teslimat gecikmesi lojistik kaynaklı tespit edildi. 240 TL iade ve değişim talebi 90 saniyede hazır hale getirilebilir.' }
+            ],
+            en: [
+              { role: 'incoming', text: 'Why has my package been delayed and how long will a return take?' },
+              { role: 'outgoing', text: 'The delay was caused by a shipping partner. I can issue a 240 SAR refund and create a replacement request in under 90 seconds.' }
+            ]
+          }
+        },
+        bank: {
+          title: 'تحويل بنكي متأخر',
+          summary: 'العميل يطلب توضيحًا حول تأكيد تحويل فوري، وقد تكون هناك حالة حساسية إذا لم يستجب النظام خلال دقائق.',
+          tags: ['تحقق سريع', 'مراجعة آمنة', 'تحديث مباشر'],
+          messages: {
+            ar: [
+              { role: 'incoming', text: 'هل تم تحويل المبلغ؟ أنا أحتاج تأكيدًا فوريًا قبل الساعة 6.' },
+              { role: 'outgoing', text: 'أستطيع مراجعة سجل التحويل، التحقق من وقت التنفيذ، وتوضيح هل تم تأكيده في الحساب أم لا مع إشعارات دقيقة.' }
+            ],
+            tr: [
+              { role: 'incoming', text: 'Transfer onaylandı mı? Saat 18:00’dan önce kesin bilgi gerekli.' },
+              { role: 'outgoing', text: 'Transfer kayıtlarını kontrol edip işlemin saatini ve hesap durumunu netleştiriyorum, ardından gerekli adımları bildiririm.' }
+            ],
+            en: [
+              { role: 'incoming', text: 'Has the transfer been confirmed? I need clear status before 6 PM.' },
+              { role: 'outgoing', text: 'I can check the transfer history, confirm execution time, and tell you whether the funds were posted before the deadline.' }
+            ]
+          }
+        },
+        telecom: {
+          title: 'انقطاع خدمة اتصالات',
+          summary: 'العميل يشكو من انقطاع متكرر في الإنترنت، وقد يطلب تحويلًا إلى فني إذا لم يتم حل المشكلة بسرعة.',
+          tags: ['تشخيص فوري', 'إعادة تشغيل', 'تحويل فني'],
+          messages: {
+            ar: [
+              { role: 'incoming', text: 'الإنترنت متقطع منذ أكثر من ساعة، وأحتاج إلى استعادة الخدمة الآن.' },
+              { role: 'outgoing', text: 'أرى انقطاعًا متكررًا في منطقة العميل. سأفحص التحديثات الأخيرة، وأقترح إعادة تشغيل الخدمة أو تحويلها إلى فني إن لزم.' }
+            ],
+            tr: [
+              { role: 'incoming', text: 'İnternet saatlerdir kesiliyor, acil çözüm istiyorum.' },
+              { role: 'outgoing', text: 'Müşteri bölgesinde tekrarlanan ağ kesintisi tespit edildi. Son güncellemeleri kontrol edip gerekliysa teknik ekip transferi başlatıyorum.' }
+            ],
+            en: [
+              { role: 'incoming', text: 'My internet keeps dropping and I need this fixed urgently.' },
+              { role: 'outgoing', text: 'I detected repeated service instability in your area. I can check the latest network diagnostics and escalate to a technician if needed.' }
+            ]
+          }
+        }
+      };
+
+      const langButtons = document.querySelectorAll('[data-lang]');
+      const scenarioButtons = document.querySelectorAll('[data-scenario]');
+      const simulatorThread = document.getElementById('simulatorThread');
+      const scenarioTitle = document.getElementById('scenarioTitle');
+      const scenarioSummary = document.getElementById('scenarioSummary');
+      const scenarioTags = document.getElementById('scenarioTags');
+
+      let selectedScenario = 'retail';
+      let selectedLang = 'ar';
+
+      function renderMessages() {
+        const messages = scenarioData[selectedScenario].messages[selectedLang];
+        simulatorThread.innerHTML = messages
+          .map(
+            (message) => `
+              <div class="chat-row ${message.role}">
+                <div class="avatar">${message.role === 'incoming' ? 'م' : 'AI'}</div>
+                <div class="bubble">${message.text}</div>
+              </div>
+            `
+          )
+          .join('');
+      }
+
+      function renderScenario() {
+        const current = scenarioData[selectedScenario];
+        scenarioTitle.textContent = current.title;
+        scenarioSummary.textContent = current.summary;
+        scenarioTags.innerHTML = current.tags.map(tag => `<span class="mini-pill">${tag}</span>`).join('');
+        renderMessages();
+      }
+
+      langButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+          langButtons.forEach((item) => {
+            const isSelected = item === button;
+            item.classList.toggle('active', isSelected);
+            item.setAttribute('aria-pressed', String(isSelected));
+          });
+          selectedLang = button.dataset.lang;
+          renderMessages();
+        });
+      });
+
+      scenarioButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+          scenarioButtons.forEach((item) => {
+            const isSelected = item === button;
+            item.classList.toggle('active', isSelected);
+            item.setAttribute('aria-pressed', String(isSelected));
+          });
+          selectedScenario = button.dataset.scenario;
+          renderScenario();
+        });
+      });
+
+      renderScenario();
+
+      const ticketInput = document.getElementById('monthlyTickets');
+      const automationInput = document.getElementById('automationRate');
+      const handleTimeInput = document.getElementById('avgHandleTime');
+
+      const monthlyTicketsValue = document.getElementById('monthlyTicketsValue');
+      const automationRateValue = document.getElementById('automationRateValue');
+      const avgHandleTimeValue = document.getElementById('avgHandleTimeValue');
+      const roiResult = document.getElementById('roiResult');
+      const annualSavings = document.getElementById('annualSavings');
+      const ticketReduction = document.getElementById('ticketReduction');
+      const avgResolution = document.getElementById('avgResolution');
+
+      function formatCurrency(value) {
+        return new Intl.NumberFormat('en-SA', {
+          style: 'currency',
+          currency: 'SAR',
+          maximumFractionDigits: 0,
+        }).format(value);
+      }
+
+      function updateROI() {
+        const tickets = Number(ticketInput.value);
+        const automation = Number(automationInput.value);
+        const handleTime = Number(handleTimeInput.value);
+
+        monthlyTicketsValue.textContent = Number(tickets).toLocaleString('en-US');
+        automationRateValue.textContent = `${automation}%`;
+        avgHandleTimeValue.textContent = `${handleTime.toFixed(1)} دقيقة`;
+
+        const savings = tickets * 38 * 12 * (automation / 100) * 0.75;
+        const reducedTickets = Math.max(10, tickets * (1 - automation / 100) * 0.35);
+        const resolutionMinutes = Math.max(1.1, handleTime * (1 - automation / 140));
+
+        roiResult.textContent = formatCurrency(savings);
+        annualSavings.textContent = formatCurrency(savings);
+        ticketReduction.textContent = `-${Math.round((reducedTickets / tickets) * 100)}%`;
+        avgResolution.textContent = `${resolutionMinutes.toFixed(1)}m`;
+      }
+
+      [ticketInput, automationInput, handleTimeInput].forEach((input) => {
+        input.addEventListener('input', updateROI);
+      });
+
+      updateROI();
+
+      document.querySelectorAll('.faq-question').forEach((button) => {
+        button.addEventListener('click', () => {
+          const item = button.closest('.faq-item');
+          const isOpen = item.classList.contains('open');
+
+          document.querySelectorAll('.faq-item').forEach((faq) => {
+            faq.classList.remove('open');
+            faq.querySelector('.faq-question').setAttribute('aria-expanded', 'false');
+          });
+
+          if (!isOpen) {
+            item.classList.add('open');
+            button.setAttribute('aria-expanded', 'true');
+          }
+        });
+      });
+
+      const demoForm = document.getElementById('demoForm');
+      const formStatus = document.getElementById('formStatus');
+
+      demoForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const email = document.getElementById('emailInput').value.trim();
+        if (!email || !demoForm.checkValidity()) {
+          formStatus.textContent = 'يرجى إدخال بريد إلكتروني صحيح.';
+          return;
+        }
+
+        const subject = encodeURIComponent('طلب عرض تجريبي لـ Wakeel');
+        const body = encodeURIComponent(`مرحبًا، أود حجز عرض تجريبي لـ Wakeel.\nبريد التواصل: ${email}`);
+        formStatus.textContent = 'سيتم فتح تطبيق البريد لإرسال طلبك.';
+        window.location.href = `mailto:hello@getwakeel.dev?subject=${subject}&body=${body}`;
+      });
+    </script>
+  </body>
 </html>
